@@ -186,15 +186,23 @@ func (errBlockOutOfRangeType) Error() string {
 	return "block index out of range"
 }
 
+func mustWrite(buf *bytes.Buffer, data ...any) {
+	for _, d := range data {
+		if err := binary.Write(buf, binary.BigEndian, d); err != nil {
+			panic(err)
+		}
+	}
+}
+
 func MarshalOps(ops []Op) []byte {
 	var buf bytes.Buffer
 	for _, op := range ops {
 		if op.Copy {
 			buf.WriteByte(1)
-			binary.Write(&buf, binary.BigEndian, uint32(op.Index))
+			mustWrite(&buf, uint32(op.Index))
 		} else {
 			buf.WriteByte(0)
-			binary.Write(&buf, binary.BigEndian, uint32(len(op.Data)))
+			mustWrite(&buf, uint32(len(op.Data)))
 			buf.Write(op.Data)
 		}
 	}
@@ -232,10 +240,9 @@ func UnmarshalOps(data []byte) ([]Op, error) {
 
 func MarshalSignature(sig *Signature) []byte {
 	var buf bytes.Buffer
-	binary.Write(&buf, binary.BigEndian, uint32(sig.BlockSize))
-	binary.Write(&buf, binary.BigEndian, uint32(len(sig.Blocks)))
+	mustWrite(&buf, uint32(sig.BlockSize), uint32(len(sig.Blocks)))
 	for _, b := range sig.Blocks {
-		binary.Write(&buf, binary.BigEndian, b.Weak)
+		mustWrite(&buf, b.Weak)
 		buf.Write(b.Strong[:])
 	}
 	return buf.Bytes()

@@ -150,7 +150,7 @@ func TestFileSmallerThanBlock(t *testing.T) {
 
 func TestLargeFileRandomChanges(t *testing.T) {
 	base := make([]byte, 65536)
-	rand.Read(base)
+	_, _ = rand.Read(base)
 
 	modified := make([]byte, len(base))
 	copy(modified, base)
@@ -235,7 +235,7 @@ func TestMarshalUnmarshalSignature(t *testing.T) {
 
 func TestSignNonDefaultBlockSize(t *testing.T) {
 	data := make([]byte, 100)
-	rand.Read(data)
+	_, _ = rand.Read(data)
 
 	sig := SignBytes(data, 32)
 	if sig.BlockSize != 32 {
@@ -257,8 +257,8 @@ func TestApplyBlockOutOfRange(t *testing.T) {
 }
 
 func BenchmarkSign(b *testing.B) {
-	data := make([]byte, 1<<20) // 1MB
-	rand.Read(data)
+	data := make([]byte, 1<<20)
+	_, _ = rand.Read(data)
 	b.SetBytes(int64(len(data)))
 	b.ResetTimer()
 	for i := 0; i < b.N; i++ {
@@ -269,7 +269,7 @@ func BenchmarkSign(b *testing.B) {
 func BenchmarkDiffApply(b *testing.B) {
 	base := make([]byte, 1<<20)
 	modified := make([]byte, 1<<20)
-	rand.Read(base)
+	_, _ = rand.Read(base)
 	copy(modified, base)
 	modified[len(modified)/2] = ^modified[len(modified)/2]
 
@@ -279,6 +279,6 @@ func BenchmarkDiffApply(b *testing.B) {
 
 	for i := 0; i < b.N; i++ {
 		ops, _ := DiffBytes(sig, modified)
-		Apply(base, sig.BlockSize, ops)
+		_, _ = Apply(base, sig.BlockSize, ops)
 	}
 }

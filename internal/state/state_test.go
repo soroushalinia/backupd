@@ -61,8 +61,12 @@ func TestLastSnapshot(t *testing.T) {
 	snap1 := config.Snapshot{ID: "snap-1", Plan: "test-plan", Timestamp: now.Add(-time.Hour), Size: 100}
 	snap2 := config.Snapshot{ID: "snap-2", Plan: "test-plan", Timestamp: now, Size: 200}
 
-	store.RecordSnapshot(snap1)
-	store.RecordSnapshot(snap2)
+	if err := store.RecordSnapshot(snap1); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSnapshot(snap2); err != nil {
+		t.Fatal(err)
+	}
 
 	last, err = store.LastSnapshot("test-plan")
 	if err != nil {
@@ -81,8 +85,12 @@ func TestPlanIsolation(t *testing.T) {
 	}
 	defer store.Close()
 
-	store.RecordSnapshot(config.Snapshot{ID: "s1", Plan: "plan-a", Timestamp: time.Now(), Size: 1})
-	store.RecordSnapshot(config.Snapshot{ID: "s2", Plan: "plan-b", Timestamp: time.Now(), Size: 2})
+	if err := store.RecordSnapshot(config.Snapshot{ID: "s1", Plan: "plan-a", Timestamp: time.Now(), Size: 1}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.RecordSnapshot(config.Snapshot{ID: "s2", Plan: "plan-b", Timestamp: time.Now(), Size: 2}); err != nil {
+		t.Fatal(err)
+	}
 
 	snaps, _ := store.ListSnapshots("plan-a")
 	if len(snaps) != 1 || snaps[0].ID != "s1" {

@@ -85,8 +85,12 @@ func TestFileSourceCapture(t *testing.T) {
 func TestFileSourceExclude(t *testing.T) {
 	dir := t.TempDir()
 
-	os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("keep"), 0644)
-	os.WriteFile(filepath.Join(dir, "skip.log"), []byte("skip"), 0644)
+	if err := os.WriteFile(filepath.Join(dir, "keep.txt"), []byte("keep"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "skip.log"), []byte("skip"), 0644); err != nil {
+		t.Fatal(err)
+	}
 
 	src := NewFileSource(dir, []string{"*.log"})
 	r, err := src.Capture(context.Background())

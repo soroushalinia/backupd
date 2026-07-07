@@ -1,0 +1,23 @@
+linters:
+  enable:
+    - errcheck
+    - gofmt
+    - govet
+    - staticcheck
+    - unused
+
+issues:
+  exclude-dirs:
+    - vendor
+  include:
+    - EXC0002
+
+run:
+  timeout: 5m
+  tests: false
+
+linters-settings:
+  errcheck:
+    exclude-functions:
+      - encoding/binary.Write
+      - io.WriteString
