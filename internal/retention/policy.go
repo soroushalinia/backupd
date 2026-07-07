@@ -107,7 +107,7 @@ func (p Policy) keepByBucket(sorted []SnapshotSummary, kept map[string]bool, buc
 		}
 		ss := buckets[key]
 		if len(ss) > 0 {
-				kept[ss[0].ID] = true
+			kept[ss[0].ID] = true
 			count++
 		}
 	}

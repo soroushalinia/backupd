@@ -37,7 +37,7 @@ func (s *testStorage) Download(ctx context.Context, key string) (io.ReadCloser, 
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
-func (s *testStorage) Delete(ctx context.Context, key string) error   { return nil }
+func (s *testStorage) Delete(ctx context.Context, key string) error { return nil }
 func (s *testStorage) List(ctx context.Context, prefix string) ([]storage.ObjectInfo, error) {
 	return nil, nil
 }

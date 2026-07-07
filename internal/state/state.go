@@ -89,11 +89,11 @@ func (s *Store) Close() error {
 }
 
 type RunRecord struct {
-	ID        string    `json:"id"`
-	Plan      string    `json:"plan"`
-	StartedAt time.Time `json:"started_at"`
+	ID         string    `json:"id"`
+	Plan       string    `json:"plan"`
+	StartedAt  time.Time `json:"started_at"`
 	FinishedAt time.Time `json:"finished_at"`
-	Success   bool      `json:"success"`
-	Error     string    `json:"error,omitempty"`
-	Size      int64     `json:"size"`
+	Success    bool      `json:"success"`
+	Error      string    `json:"error,omitempty"`
+	Size       int64     `json:"size"`
 }

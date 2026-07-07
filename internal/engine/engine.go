@@ -241,10 +241,10 @@ func encryptionKey(enc *config.Encryption) (*encryptionInfo, []byte, error) {
 
 func writeSimpleManifest(ctx context.Context, dest storage.Storage, key, planName, snapID string, encInfo *encryptionInfo) error {
 	type simpleManifest struct {
-		Snapshot   string           `json:"snapshot"`
-		Plan       string           `json:"plan"`
-		Timestamp  string           `json:"timestamp"`
-		Encryption *encryptionInfo  `json:"encryption,omitempty"`
+		Snapshot   string          `json:"snapshot"`
+		Plan       string          `json:"plan"`
+		Timestamp  string          `json:"timestamp"`
+		Encryption *encryptionInfo `json:"encryption,omitempty"`
 	}
 	sm := simpleManifest{
 		Snapshot:   snapID,

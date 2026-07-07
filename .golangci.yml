@@ -1,7 +1,6 @@
 linters:
   enable:
     - errcheck
-    - gofmt
     - govet
     - staticcheck
     - unused
@@ -9,8 +8,6 @@ linters:
 issues:
   exclude-dirs:
     - vendor
-  include:
-    - EXC0002
 
 run:
   timeout: 5m

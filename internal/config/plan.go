@@ -7,14 +7,14 @@ type Config struct {
 }
 
 type Plan struct {
-	Name        string        `mapstructure:"name" yaml:"name"`
-	Schedule    string        `mapstructure:"schedule" yaml:"schedule"`
-	Sources     []Source      `mapstructure:"sources" yaml:"sources"`
-	Destination Destination   `mapstructure:"destination" yaml:"destination"`
-	Encryption  *Encryption   `mapstructure:"encryption" yaml:"encryption"`
-	Retention   *Retention    `mapstructure:"retention" yaml:"retention"`
+	Name        string            `mapstructure:"name" yaml:"name"`
+	Schedule    string            `mapstructure:"schedule" yaml:"schedule"`
+	Sources     []Source          `mapstructure:"sources" yaml:"sources"`
+	Destination Destination       `mapstructure:"destination" yaml:"destination"`
+	Encryption  *Encryption       `mapstructure:"encryption" yaml:"encryption"`
+	Retention   *Retention        `mapstructure:"retention" yaml:"retention"`
 	Tags        map[string]string `mapstructure:"tags" yaml:"tags"`
-	Hooks       *Hooks        `mapstructure:"hooks" yaml:"hooks"`
+	Hooks       *Hooks            `mapstructure:"hooks" yaml:"hooks"`
 }
 
 type Source struct {
@@ -53,16 +53,16 @@ type Retention struct {
 }
 
 type Hooks struct {
-	PreBackup []string `mapstructure:"pre-backup" yaml:"pre-backup"`
+	PreBackup  []string `mapstructure:"pre-backup" yaml:"pre-backup"`
 	PostBackup []string `mapstructure:"post-backup" yaml:"post-backup"`
-	OnFailure []string `mapstructure:"on-failure" yaml:"on-failure"`
+	OnFailure  []string `mapstructure:"on-failure" yaml:"on-failure"`
 }
 
 type Snapshot struct {
-	ID        string    `json:"id"`
-	Plan      string    `json:"plan"`
-	Timestamp time.Time `json:"timestamp"`
-	Sources   []string  `json:"sources"`
-	Size      int64     `json:"size"`
+	ID        string            `json:"id"`
+	Plan      string            `json:"plan"`
+	Timestamp time.Time         `json:"timestamp"`
+	Sources   []string          `json:"sources"`
+	Size      int64             `json:"size"`
 	Tags      map[string]string `json:"tags"`
 }

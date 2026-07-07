@@ -32,8 +32,8 @@ func (e *Engine) Restore(ctx context.Context, plan string, snapshotID string, ta
 
 	var generic struct {
 		Sources []struct {
-			Type  string          `json:"type"`
-			Files []fileBlockRef  `json:"files"`
+			Type  string         `json:"type"`
+			Files []fileBlockRef `json:"files"`
 		} `json:"sources"`
 	}
 	if err := json.Unmarshal(manifestData, &generic); err != nil {

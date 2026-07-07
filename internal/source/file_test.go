@@ -14,8 +14,8 @@ func TestFileSourceCapture(t *testing.T) {
 	dir := t.TempDir()
 
 	files := map[string]string{
-		"a.txt":        "hello world",
-		"sub/b.txt":    "nested file",
+		"a.txt":          "hello world",
+		"sub/b.txt":      "nested file",
 		"sub/deep/c.txt": "deeply nested",
 	}
 
