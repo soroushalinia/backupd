@@ -8,6 +8,7 @@ import (
 
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
+	"github.com/minio/minio-go/v7/pkg/tags"
 )
 
 type S3Client struct {
@@ -96,6 +97,17 @@ func (s *S3Client) List(ctx context.Context, prefix string) ([]ObjectInfo, error
 		})
 	}
 	return objects, nil
+}
+
+func (s *S3Client) SetTags(ctx context.Context, key string, tagMap map[string]string) error {
+	if len(tagMap) == 0 {
+		return nil
+	}
+	otags, err := tags.NewTags(tagMap, false)
+	if err != nil {
+		return err
+	}
+	return s.client.PutObjectTagging(ctx, s.bucket, s.key(key), otags, minio.PutObjectTaggingOptions{})
 }
 
 func (s *S3Client) Exists(ctx context.Context, key string) (bool, error) {

@@ -11,6 +11,7 @@ type Storage interface {
 	Delete(ctx context.Context, key string) error
 	List(ctx context.Context, prefix string) ([]ObjectInfo, error)
 	Exists(ctx context.Context, key string) (bool, error)
+	SetTags(ctx context.Context, key string, tags map[string]string) error
 }
 
 type ObjectInfo struct {

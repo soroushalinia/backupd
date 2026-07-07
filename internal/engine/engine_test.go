@@ -45,6 +45,9 @@ func (s *testStorage) Exists(ctx context.Context, key string) (bool, error) {
 	_, ok := s.data[key]
 	return ok, nil
 }
+func (s *testStorage) SetTags(ctx context.Context, key string, tags map[string]string) error {
+	return nil
+}
 
 func TestEngineRun(t *testing.T) {
 	dir := t.TempDir()
