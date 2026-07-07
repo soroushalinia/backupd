@@ -1,0 +1,42 @@
+version: 2
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - main: ./cmd/backupd
+    binary: backupd
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - freebsd
+    goarch:
+      - amd64
+      - arm64
+      - arm
+    goarm:
+      - 6
+      - 7
+
+archives:
+  - format_overrides:
+      - goos: darwin
+        format: zip
+    files:
+      - LICENSE
+      - README.md
+
+checksum:
+  name_template: checksums.txt
+
+snapshot:
+  version_template: "{{ .Tag }}-next"
+
+changelog:
+  sort: asc
+  use: github-native

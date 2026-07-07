@@ -1,24 +1,29 @@
 BINARY := backupd
 CMD := ./cmd/backupd
+VERSION := $(or $(shell git describe --tags --always 2>/dev/null),dev)
+LDFLAGS := -ldflags="-s -w -X main.version=$(VERSION)"
 
-.PHONY: all build clean lint test tidy fmt install run
+.PHONY: all build install clean lint test cover tidy fmt run release
 
 all: lint test build
 
 build:
-	go build -o bin/$(BINARY) $(CMD)
+	go build $(LDFLAGS) -o bin/$(BINARY) $(CMD)
 
 install:
-	go install $(CMD)
+	go install $(LDFLAGS) $(CMD)
 
 clean:
-	rm -rf bin/
+	rm -rf bin/ dist/
 
 lint:
 	go vet ./...
 
 test:
 	go test ./... -count=1 -timeout=30s
+
+cover:
+	go test ./... -count=1 -coverprofile=coverage.out && go tool cover -html=coverage.out -o coverage.html
 
 tidy:
 	go mod tidy
@@ -28,3 +33,6 @@ fmt:
 
 run: build
 	./bin/$(BINARY) list --config examples/backupd.yaml
+
+release:
+	@goreleaser release --clean

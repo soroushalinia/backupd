@@ -28,5 +28,5 @@ func (s *sqliteAdapter) Dump(ctx context.Context) (io.ReadCloser, error) {
 }
 
 func (s *sqliteAdapter) execDump(ctx context.Context) (io.ReadCloser, error) {
-	return nil, fmt.Errorf("sqlite exec adapter not implemented yet")
+	return nil, fmt.Errorf("sqlite exec adapter not implemented yet (use dump-tool: sqlite3)")
 }

@@ -76,6 +76,14 @@ func (s *Store) LastSnapshot(plan string) (*config.Snapshot, error) {
 	return last, nil
 }
 
+func (s *Store) DeleteSnapshot(plan, snapID string) error {
+	return s.db.Update(func(tx *bbolt.Tx) error {
+		b := tx.Bucket(bucketName)
+		key := fmt.Sprintf("%s/%s", plan, snapID)
+		return b.Delete([]byte(key))
+	})
+}
+
 func (s *Store) Close() error {
 	return s.db.Close()
 }

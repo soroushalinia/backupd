@@ -9,6 +9,7 @@ import (
 	"github.com/minio/minio-go/v7"
 	"github.com/minio/minio-go/v7/pkg/credentials"
 	"github.com/minio/minio-go/v7/pkg/tags"
+	"github.com/xero/backupd/internal/config"
 )
 
 type S3Client struct {
@@ -72,7 +73,16 @@ func (s *S3Client) Upload(ctx context.Context, key string, r io.Reader) error {
 }
 
 func (s *S3Client) Download(ctx context.Context, key string) (io.ReadCloser, error) {
-	obj, err := s.client.GetObject(ctx, s.bucket, s.key(key), minio.GetObjectOptions{})
+	fullKey := s.key(key)
+	_, err := s.client.StatObject(ctx, s.bucket, fullKey, minio.StatObjectOptions{})
+	if err != nil {
+		errResp := minio.ToErrorResponse(err)
+		if errResp.Code == "NoSuchKey" {
+			return nil, nil
+		}
+		return nil, fmt.Errorf("stat %q: %w", key, err)
+	}
+	obj, err := s.client.GetObject(ctx, s.bucket, fullKey, minio.GetObjectOptions{})
 	if err != nil {
 		return nil, fmt.Errorf("downloading %q: %w", key, err)
 	}
@@ -108,6 +118,22 @@ func (s *S3Client) SetTags(ctx context.Context, key string, tagMap map[string]st
 		return err
 	}
 	return s.client.PutObjectTagging(ctx, s.bucket, s.key(key), otags, minio.PutObjectTaggingOptions{})
+}
+
+func NewFromDest(dest config.Destination) (*S3Client, error) {
+	secure := true
+	if dest.Secure != nil {
+		secure = *dest.Secure
+	}
+	return NewS3(S3Config{
+		Endpoint:  dest.Endpoint,
+		Region:    dest.Region,
+		AccessKey: dest.AccessKey,
+		SecretKey: dest.SecretKey,
+		Bucket:    dest.Bucket,
+		Prefix:    dest.Prefix,
+		Secure:    secure,
+	})
 }
 
 func (s *S3Client) Exists(ctx context.Context, key string) (bool, error) {

@@ -38,6 +38,7 @@ type Destination struct {
 	AccessKey    string `mapstructure:"access-key" yaml:"access-key"`
 	SecretKey    string `mapstructure:"secret-key" yaml:"secret-key"`
 	StorageClass string `mapstructure:"storage-class" yaml:"storage-class"`
+	Secure       *bool  `mapstructure:"secure" yaml:"secure"`
 }
 
 type Encryption struct {

@@ -9,6 +9,9 @@ import (
 )
 
 func Load(path string) (*Config, error) {
+	if path == "" {
+		path = DefaultConfigPath()
+	}
 	v := viper.New()
 	v.SetConfigFile(path)
 	v.SetEnvPrefix("BACKUPD")

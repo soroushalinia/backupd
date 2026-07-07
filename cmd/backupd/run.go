@@ -36,7 +36,7 @@ func newRunCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			dest, err := storageFromDest(plan.Destination)
+			dest, err := storage.NewFromDest(plan.Destination)
 			if err != nil {
 				return fmt.Errorf("storage: %w", err)
 			}
@@ -51,18 +51,6 @@ func newRunCmd() *cobra.Command {
 			return nil
 		},
 	}
-}
-
-func storageFromDest(dest config.Destination) (storage.Storage, error) {
-	return storage.NewS3(storage.S3Config{
-		Endpoint:  dest.Endpoint,
-		Region:    dest.Region,
-		AccessKey: dest.AccessKey,
-		SecretKey: dest.SecretKey,
-		Bucket:    dest.Bucket,
-		Prefix:    dest.Prefix,
-		Secure:    true,
-	})
 }
 
 func defaultStatePath() string {

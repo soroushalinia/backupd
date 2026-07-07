@@ -10,16 +10,14 @@ import (
 	"github.com/xero/backupd/internal/storage"
 )
 
-func newRestoreCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "restore <plan-name> <snapshot-id>",
-		Short: "Restore a snapshot to a local directory",
-		Args:  cobra.ExactArgs(2),
+func newVerifyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "verify <plan-name> [snapshot-id]",
+		Short: "Verify integrity of stored snapshots",
+		Args:  cobra.RangeArgs(1, 2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := config.FromContext(cmd.Context())
 			planName := args[0]
-			snapshotID := args[1]
-			target, _ := cmd.Flags().GetString("target")
 
 			var plan *config.Plan
 			for i := range cfg.Plans {
@@ -44,15 +42,16 @@ func newRestoreCmd() *cobra.Command {
 			}
 
 			eng := engine.New(store)
-			if err := eng.Restore(cmd.Context(), planName, snapshotID, target, dest); err != nil {
-				return fmt.Errorf("restore failed: %w", err)
+			var snapshotID string
+			if len(args) == 2 {
+				snapshotID = args[1]
 			}
 
-			fmt.Printf("restored snapshot %s to %s\n", snapshotID, target)
+			if err := eng.Verify(cmd.Context(), planName, snapshotID, dest); err != nil {
+				return fmt.Errorf("verification failed: %w", err)
+			}
+			fmt.Println("verification passed")
 			return nil
 		},
 	}
-
-	cmd.Flags().StringP("target", "t", ".", "restore target directory")
-	return cmd
 }

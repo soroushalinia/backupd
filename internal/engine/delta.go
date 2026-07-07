@@ -182,27 +182,29 @@ func isExcluded(rel string, exclude []string) bool {
 	return false
 }
 
-func writeSnapshotManifest(ctx context.Context, dest storage.Storage, planName, snapID string, totalSize int64, m *fileManifest, tags map[string]string) error {
+func writeSnapshotManifest(ctx context.Context, dest storage.Storage, planName, snapID string, totalSize int64, m *fileManifest, tags map[string]string, encInfo *encryptionInfo) error {
 	type sourceEntry struct {
 		Type  string         `json:"type"`
 		Files []fileBlockRef `json:"files,omitempty"`
 	}
 
 	type snapManifest struct {
-		Snapshot  string            `json:"snapshot"`
-		Plan      string            `json:"plan"`
-		Timestamp string            `json:"timestamp"`
-		Size      int64             `json:"size"`
-		Sources   []sourceEntry     `json:"sources"`
-		Tags      map[string]string `json:"tags,omitempty"`
+		Snapshot   string            `json:"snapshot"`
+		Plan       string            `json:"plan"`
+		Timestamp  string            `json:"timestamp"`
+		Size       int64             `json:"size"`
+		Sources    []sourceEntry     `json:"sources"`
+		Encryption *encryptionInfo   `json:"encryption,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
 	}
 
 	sm := snapManifest{
-		Snapshot:  snapID,
-		Plan:      planName,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
-		Size:      totalSize,
-		Tags:      tags,
+		Snapshot:   snapID,
+		Plan:       planName,
+		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		Size:       totalSize,
+		Tags:       tags,
+		Encryption: encInfo,
 		Sources: []sourceEntry{
 			{
 				Type:  "file",

@@ -87,11 +87,11 @@ func (s *FileSource) tar(ctx context.Context, w io.WriteCloser) error {
 			if err != nil {
 				return err
 			}
-			defer f.Close()
-
 			if _, err := io.Copy(tw, f); err != nil {
+				f.Close()
 				return fmt.Errorf("writing %s: %w", path, err)
 			}
+			f.Close()
 		}
 
 		return nil

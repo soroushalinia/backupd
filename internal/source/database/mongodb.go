@@ -28,5 +28,5 @@ func (m *mongoDBAdapter) Dump(ctx context.Context) (io.ReadCloser, error) {
 }
 
 func (m *mongoDBAdapter) execDump(ctx context.Context) (io.ReadCloser, error) {
-	return nil, fmt.Errorf("mongodump exec adapter not implemented yet (use pg_dump or mysqldump)")
+	return nil, fmt.Errorf("mongodump exec adapter not implemented yet (use dump-tool: mongodump)")
 }
