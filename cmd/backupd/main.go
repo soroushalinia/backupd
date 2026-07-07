@@ -9,6 +9,15 @@ import (
 
 var version = "dev"
 
+func needsConfig(cmd *cobra.Command) bool {
+	for _, c := range []string{"completion", "help", "backupd"} {
+		if cmd.Name() == c {
+			return false
+		}
+	}
+	return true
+}
+
 func main() {
 	cmd := &cobra.Command{
 		Use:          "backupd",
@@ -16,6 +25,9 @@ func main() {
 		SilenceUsage: true,
 		Version:      version,
 		PersistentPreRunE: func(cmd *cobra.Command, args []string) error {
+			if !needsConfig(cmd) {
+				return nil
+			}
 			cfgPath, _ := cmd.Flags().GetString("config")
 			cfg, err := config.Load(cfgPath)
 			if err != nil {
