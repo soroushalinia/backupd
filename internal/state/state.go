@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/xero/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/config"
 	"go.etcd.io/bbolt"
 )
 

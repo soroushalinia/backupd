@@ -7,9 +7,9 @@ import (
 	"syscall"
 
 	"github.com/spf13/cobra"
-	"github.com/xero/backupd/internal/config"
-	"github.com/xero/backupd/internal/scheduler"
-	"github.com/xero/backupd/internal/state"
+	"github.com/soroushalinia/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/scheduler"
+	"github.com/soroushalinia/backupd/internal/state"
 )
 
 func newDaemonCmd() *cobra.Command {

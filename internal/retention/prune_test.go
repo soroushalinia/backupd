@@ -7,9 +7,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xero/backupd/internal/config"
-	"github.com/xero/backupd/internal/state"
-	"github.com/xero/backupd/internal/storage"
+	"github.com/soroushalinia/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/state"
+	"github.com/soroushalinia/backupd/internal/storage"
 )
 
 type mockStorage struct {

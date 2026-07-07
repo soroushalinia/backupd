@@ -6,8 +6,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xero/backupd/internal/config"
-	"github.com/xero/backupd/internal/state"
+	"github.com/soroushalinia/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/state"
 )
 
 func TestNewDaemon(t *testing.T) {

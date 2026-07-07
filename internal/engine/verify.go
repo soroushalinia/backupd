@@ -10,8 +10,8 @@ import (
 	"fmt"
 	"io"
 
-	"github.com/xero/backupd/internal/crypto"
-	"github.com/xero/backupd/internal/storage"
+	"github.com/soroushalinia/backupd/internal/crypto"
+	"github.com/soroushalinia/backupd/internal/storage"
 )
 
 func (e *Engine) Verify(ctx context.Context, planName string, snapshotID string, dest storage.Storage) error {

@@ -5,7 +5,7 @@ import (
 	"sort"
 	"time"
 
-	"github.com/xero/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/config"
 )
 
 type Policy struct {

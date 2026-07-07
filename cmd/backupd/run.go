@@ -4,10 +4,10 @@ import (
 	"fmt"
 
 	"github.com/spf13/cobra"
-	"github.com/xero/backupd/internal/config"
-	"github.com/xero/backupd/internal/engine"
-	"github.com/xero/backupd/internal/state"
-	"github.com/xero/backupd/internal/storage"
+	"github.com/soroushalinia/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/engine"
+	"github.com/soroushalinia/backupd/internal/state"
+	"github.com/soroushalinia/backupd/internal/storage"
 )
 
 func newRunCmd() *cobra.Command {

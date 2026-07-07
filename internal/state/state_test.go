@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xero/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/config"
 )
 
 func TestStoreSnapshots(t *testing.T) {

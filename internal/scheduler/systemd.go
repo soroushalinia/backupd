@@ -18,7 +18,7 @@ func GenerateSystemd(planName, schedule, binaryPath, configPath string) (*System
 
 	service := fmt.Sprintf(`[Unit]
 Description=backupd - %s
-Documentation=https://github.com/xero/backupd
+Documentation=https://github.com/soroushalinia/backupd
 
 [Service]
 Type=oneshot

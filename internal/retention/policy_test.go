@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/xero/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/config"
 )
 
 func mustTime(s string) time.Time {

@@ -4,7 +4,7 @@ import (
 	"os"
 
 	"github.com/spf13/cobra"
-	"github.com/xero/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/config"
 )
 
 var version = "dev"

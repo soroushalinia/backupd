@@ -14,8 +14,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/xero/backupd/internal/delta"
-	"github.com/xero/backupd/internal/storage"
+	"github.com/soroushalinia/backupd/internal/delta"
+	"github.com/soroushalinia/backupd/internal/storage"
 )
 
 type fileBlockRef struct {

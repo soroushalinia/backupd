@@ -5,8 +5,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/xero/backupd/internal/config"
-	"github.com/xero/backupd/internal/state"
+	"github.com/soroushalinia/backupd/internal/config"
+	"github.com/soroushalinia/backupd/internal/state"
 )
 
 func newStatusCmd() *cobra.Command {
