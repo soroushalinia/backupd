@@ -8,7 +8,6 @@ import (
 	"log"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/xero/backupd/internal/config"
 	"github.com/xero/backupd/internal/source"
 	"github.com/xero/backupd/internal/state"
@@ -33,34 +32,53 @@ func (e *Engine) Run(ctx context.Context, plan config.Plan, dest storage.Storage
 	log.Printf("starting backup for plan %q", plan.Name)
 	start := time.Now()
 
-	snapID := uuid.New().String()
-	manifestKey := fmt.Sprintf("%s/snapshots/%s/manifest.json", plan.Name, snapID)
-
+	snapID := newSnapshotID()
 	totalSize := int64(0)
 
+	var fileManifests []*fileManifest
+
 	for i, srcCfg := range plan.Sources {
-		src, err := sourceFromConfig(srcCfg)
-		if err != nil {
-			return nil, fmt.Errorf("source %d: %w", i, err)
-		}
+		switch srcCfg.Type {
+		case "file":
+			size, fm, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude)
+			if err != nil {
+				return nil, fmt.Errorf("backing up files: %w", err)
+			}
+			totalSize += size
+			fileManifests = append(fileManifests, fm)
 
-		srcKey := fmt.Sprintf("%s/snapshots/%s/sources/%d.tar.gz", plan.Name, snapID, i)
-
-		r, err := src.Capture(ctx)
-		if err != nil {
-			return nil, fmt.Errorf("capturing source %d: %w", i, err)
+		default:
+			src, err := sourceFromConfig(srcCfg)
+			if err != nil {
+				return nil, fmt.Errorf("source %d: %w", i, err)
+			}
+			srcKey := fmt.Sprintf("%s/snapshots/%s/sources/%d.tar.gz", plan.Name, snapID, i)
+			r, err := src.Capture(ctx)
+			if err != nil {
+				return nil, fmt.Errorf("capturing source %d: %w", i, err)
+			}
+			size, err := uploadStream(ctx, dest, srcKey, r)
+			r.Close()
+			if err != nil {
+				return nil, fmt.Errorf("uploading source %d: %w", i, err)
+			}
+			totalSize += size
 		}
-
-		size, err := e.uploadStream(ctx, dest, srcKey, r)
-		r.Close()
-		if err != nil {
-			return nil, fmt.Errorf("uploading source %d: %w", i, err)
-		}
-		totalSize += size
 	}
 
-	if err := e.writeManifest(ctx, dest, manifestKey, plan, snapID); err != nil {
-		return nil, fmt.Errorf("writing manifest: %w", err)
+	if len(fileManifests) > 0 {
+		merged := &fileManifest{}
+		for _, fm := range fileManifests {
+			merged.Files = append(merged.Files, fm.Files...)
+		}
+		if err := writeSnapshotManifest(ctx, dest, plan.Name, snapID, totalSize, merged, plan.Tags); err != nil {
+			return nil, fmt.Errorf("writing manifest: %w", err)
+		}
+	} else {
+		manifestKey := fmt.Sprintf("%s/snapshots/%s/manifest.json", plan.Name, snapID)
+		if err := writeSimpleManifest(ctx, dest, manifestKey, plan.Name, snapID); err != nil {
+			return nil, fmt.Errorf("writing manifest: %w", err)
+		}
 	}
 
 	snap := config.Snapshot{
@@ -85,7 +103,7 @@ func (e *Engine) Run(ctx context.Context, plan config.Plan, dest storage.Storage
 	}, nil
 }
 
-func (e *Engine) uploadStream(ctx context.Context, dest storage.Storage, key string, r io.Reader) (int64, error) {
+func uploadStream(ctx context.Context, dest storage.Storage, key string, r io.Reader) (int64, error) {
 	var buf bytes.Buffer
 	written, err := io.Copy(&buf, r)
 	if err != nil {
@@ -97,21 +115,13 @@ func (e *Engine) uploadStream(ctx context.Context, dest storage.Storage, key str
 	return written, nil
 }
 
-func (e *Engine) writeManifest(ctx context.Context, dest storage.Storage, key string, plan config.Plan, snapID string) error {
+func writeSimpleManifest(ctx context.Context, dest storage.Storage, key, planName, snapID string) error {
 	manifest := fmt.Sprintf(`{
   "snapshot": %q,
   "plan": %q,
-  "timestamp": %q,
-  "sources": %d
-}`, snapID, plan.Name, time.Now().UTC().Format(time.RFC3339), len(plan.Sources))
-
-	pr, pw := io.Pipe()
-	go func() {
-		pw.Write([]byte(manifest))
-		pw.Close()
-	}()
-
-	return dest.Upload(ctx, key, pr)
+  "timestamp": %q
+}`, snapID, planName, time.Now().UTC().Format(time.RFC3339))
+	return dest.Upload(ctx, key, bytes.NewReader([]byte(manifest)))
 }
 
 func sourceFromConfig(cfg config.Source) (source.Source, error) {
