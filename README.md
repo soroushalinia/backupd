@@ -1,8 +1,7 @@
 # backupd
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/soroushalinia/backupd)](https://goreportcard.com/report/github.com/soroushalinia/backupd)
-[![License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
-[![Go Version](https://img.shields.io/github/go-mod/go-version/github.com/soroushalinia/backupd)](go.mod)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/soroushalinia/backupd)](https://github.com/soroushalinia/backupd)
+[![License](https://img.shields.io/github/license/soroushalinia/backupd)](LICENSE)
 
 Declarative S3-compatible backup daemon. Define your backup plans in a single YAML file — sources, destination, encryption, retention, tags, and hooks — and let backupd handle the rest.
 
