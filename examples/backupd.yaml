@@ -1,0 +1,43 @@
+plans:
+  - name: "server-backup"
+    schedule: "0 3 * * *"
+    sources:
+      - type: file
+        path: /etc/nginx
+      - type: file
+        path: /var/www
+        exclude: ["*.log", "cache/", "tmp/"]
+      - type: database
+        adapter: postgres
+        dsn: "postgres://user:pass@localhost:5432/mydb"
+      - type: docker
+        volume: myapp_data
+      - type: kubernetes
+        pvc: data-pvc
+        snapshot: true
+    destination:
+      type: s3
+      bucket: my-backups
+      prefix: /server
+      endpoint: s3.amazonaws.com
+      region: us-east-1
+      access-key: ${AWS_ACCESS_KEY_ID}
+      secret-key: ${AWS_SECRET_ACCESS_KEY}
+      storage-class: STANDARD_IA
+    encryption:
+      passphrase: ${BACKUP_PASSPHRASE}
+    retention:
+      keep-last: 30
+      keep-daily: 7
+      keep-weekly: 4
+      keep-monthly: 12
+    tags:
+      environment: production
+      app: myapp
+    hooks:
+      pre-backup:
+        - "echo 'Starting backup...'"
+      post-backup:
+        - "curl -fsS -m 10 --retry 5 -o /dev/null https://hc-ping.com/my-uuid"
+      on-failure:
+        - "mail -s 'Backup failed' admin@example.com"
