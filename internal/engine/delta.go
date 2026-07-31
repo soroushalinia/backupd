@@ -5,18 +5,28 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"path/filepath"
 	"strings"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/soroushalinia/backupd/internal/delta"
 	"github.com/soroushalinia/backupd/internal/storage"
 )
+
+func formatBytes(b int64) string {
+	switch {
+	case b >= 1024*1024*1024:
+		return fmt.Sprintf("%.2f GiB", float64(b)/(1024*1024*1024))
+	case b >= 1024*1024:
+		return fmt.Sprintf("%.2f MiB", float64(b)/(1024*1024))
+	default:
+		return fmt.Sprintf("%d bytes", b)
+	}
+}
 
 type fileBlockRef struct {
 	Path     string      `json:"path"`
@@ -34,6 +44,8 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 	var total int64
 	manifest := &fileManifest{}
 
+	log.Printf("  scanning files in %s ...", sourceRoot)
+
 	err := filepath.Walk(sourceRoot, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
@@ -49,6 +61,7 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 		if isExcluded(rel, exclude) {
 			return nil
 		}
+		log.Printf("  delta file: %s (%s)", rel, formatBytes(fi.Size()))
 
 		data, err := os.ReadFile(path)
 		if err != nil {
@@ -137,6 +150,7 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 		return 0, nil, err
 	}
 
+	log.Printf("  delta complete: %d files, %s new/changed blocks", len(manifest.Files), formatBytes(total))
 	return total, manifest, nil
 }
 
@@ -180,46 +194,6 @@ func isExcluded(rel string, exclude []string) bool {
 		}
 	}
 	return false
-}
-
-func writeSnapshotManifest(ctx context.Context, dest storage.Storage, planName, snapID string, totalSize int64, m *fileManifest, tags map[string]string, encInfo *encryptionInfo) error {
-	type sourceEntry struct {
-		Type  string         `json:"type"`
-		Files []fileBlockRef `json:"files,omitempty"`
-	}
-
-	type snapManifest struct {
-		Snapshot   string            `json:"snapshot"`
-		Plan       string            `json:"plan"`
-		Timestamp  string            `json:"timestamp"`
-		Size       int64             `json:"size"`
-		Sources    []sourceEntry     `json:"sources"`
-		Encryption *encryptionInfo   `json:"encryption,omitempty"`
-		Tags       map[string]string `json:"tags,omitempty"`
-	}
-
-	sm := snapManifest{
-		Snapshot:   snapID,
-		Plan:       planName,
-		Timestamp:  time.Now().UTC().Format(time.RFC3339),
-		Size:       totalSize,
-		Tags:       tags,
-		Encryption: encInfo,
-		Sources: []sourceEntry{
-			{
-				Type:  "file",
-				Files: m.Files,
-			},
-		},
-	}
-
-	data, err := json.MarshalIndent(sm, "", "  ")
-	if err != nil {
-		return err
-	}
-
-	key := fmt.Sprintf("%s/snapshots/%s/manifest.json", planName, snapID)
-	return dest.Upload(ctx, key, bytes.NewReader(data))
 }
 
 func newSnapshotID() string {

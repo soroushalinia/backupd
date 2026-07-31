@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
 )
 
 func init() {
@@ -34,21 +33,18 @@ func (p *postgresAdapter) execDump(ctx context.Context) (io.ReadCloser, error) {
 		cmd:  p.cfg.DumpTool,
 		dsn:  p.cfg.DSN,
 		parseDSN: func(dsn string) []string {
-			var args []string
-			u, err := url.Parse(dsn)
-			if err != nil {
+			parts := parseDSN(dsn)
+			if parts == nil {
 				return nil
 			}
-			if u.User != nil {
-				if pass, ok := u.User.Password(); ok {
-					args = append(args, fmt.Sprintf("postgres://%s:%s@%s%s", u.User.Username(), pass, u.Host, u.Path))
-				} else {
-					args = append(args, fmt.Sprintf("postgres://%s@%s%s", u.User.Username(), u.Host, u.Path))
-				}
-			} else {
-				args = append(args, dsn)
+			connStr := fmt.Sprintf("postgres://%s:%s@%s", parts.User, parts.Password, parts.Host)
+			if parts.Port != "" {
+				connStr += ":" + parts.Port
 			}
-			return args
+			if parts.Database != "" {
+				connStr += "/" + parts.Database
+			}
+			return []string{"-d", connStr}
 		},
 	}
 	return a.Dump(ctx)

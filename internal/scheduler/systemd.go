@@ -53,9 +53,17 @@ func cronToSystemd(cronExpr string) (string, error) {
 	weekday := parts[4]
 
 	datePart := "*" + mapDate(month, day)
-	dowPart := mapDow(weekday)
+	timePart := fmt.Sprintf("%s:%s:00", padZeros(hour, 2), padZeros(minute, 2))
 
-	return fmt.Sprintf("%s %s %s:%s:00", dowPart, datePart, padZeros(hour, 2), padZeros(minute, 2)), nil
+	var sysdTime string
+	if weekday == "*" || weekday == "?" {
+		sysdTime = fmt.Sprintf("%s %s", datePart, timePart)
+	} else {
+		dowPart := mapDow(weekday)
+		sysdTime = fmt.Sprintf("%s %s %s", dowPart, datePart, timePart)
+	}
+
+	return sysdTime, nil
 }
 
 func mapDow(cron string) string {

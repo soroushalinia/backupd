@@ -12,6 +12,7 @@ import (
 	"github.com/soroushalinia/backupd/internal/config"
 	"github.com/soroushalinia/backupd/internal/crypto"
 	"github.com/soroushalinia/backupd/internal/hook"
+	"github.com/soroushalinia/backupd/internal/progress"
 	"github.com/soroushalinia/backupd/internal/retention"
 	"github.com/soroushalinia/backupd/internal/source"
 	"github.com/soroushalinia/backupd/internal/state"
@@ -118,12 +119,15 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 	}
 
 	for i, srcCfg := range plan.Sources {
+		log.Printf("  source %d: type=%s", i, srcCfg.Type)
+
 		var srcKey string
 		var r io.ReadCloser
 		var srcErr error
 
 		switch srcCfg.Type {
 		case "file":
+			log.Printf("  source %d: backing up files from %s ...", i, srcCfg.Path)
 			size, fm, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude)
 			if err != nil {
 				return 0, fmt.Errorf("backing up files: %w", err)
@@ -133,6 +137,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 			continue
 
 		case "database":
+			log.Printf("  source %d: dumping database (%s) ...", i, srcCfg.Adapter)
 			dbSrc, err := source.NewDatabaseSource(srcCfg.Adapter, srcCfg.DSN, srcCfg.DumpTool)
 			if err != nil {
 				return 0, fmt.Errorf("database source: %w", err)
@@ -173,19 +178,37 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		}
 	}
 
+	log.Printf("  total uploaded: %s", formatBytes(totalSize))
+
 	manifestKey := fmt.Sprintf("%s/snapshots/%s/manifest.json", plan.Name, snapID)
-	if len(fileManifests) > 0 {
-		merged := &fileManifest{}
-		for _, fm := range fileManifests {
-			merged.Files = append(merged.Files, fm.Files...)
+	var sourceEntries []sourceEntry
+	for i, srcCfg := range plan.Sources {
+		if srcCfg.Type == "file" {
+			continue
 		}
-		if err := writeSnapshotManifest(ctx, dest, plan.Name, snapID, totalSize, merged, plan.Tags, encInfo); err != nil {
-			return 0, fmt.Errorf("writing manifest: %w", err)
+		var ext string
+		switch srcCfg.Type {
+		case "database":
+			ext = ".sql"
+		case "docker", "kubernetes":
+			ext = ".tar"
+		default:
+			ext = ".tar.gz"
 		}
-	} else {
-		if err := writeSimpleManifest(ctx, dest, manifestKey, plan.Name, snapID, encInfo); err != nil {
-			return 0, fmt.Errorf("writing manifest: %w", err)
-		}
+		srcKey := fmt.Sprintf("%s/snapshots/%s/sources/%d%s", plan.Name, snapID, i, ext)
+		sourceEntries = append(sourceEntries, sourceEntry{Type: srcCfg.Type, Key: srcKey})
+	}
+
+	merged := &fileManifest{}
+	for _, fm := range fileManifests {
+		merged.Files = append(merged.Files, fm.Files...)
+	}
+	if len(merged.Files) > 0 {
+		sourceEntries = append(sourceEntries, sourceEntry{Type: "file", Files: merged.Files})
+	}
+
+	if err := writeSnapshotManifest(ctx, dest, manifestKey, plan.Name, snapID, totalSize, sourceEntries, plan.Tags, encInfo); err != nil {
+		return 0, fmt.Errorf("writing manifest: %w", err)
 	}
 	if len(tags) > 0 {
 		_ = dest.SetTags(ctx, manifestKey, tags)
@@ -195,22 +218,26 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 }
 
 func uploadAndEncrypt(ctx context.Context, dest storage.Storage, key string, r io.Reader, encKey []byte) (int64, error) {
-	data, err := io.ReadAll(r)
+	pr := progress.NewReader(r, key)
+	data, err := io.ReadAll(pr)
 	if err != nil {
 		return 0, err
 	}
+	pr.Done()
 
 	if encKey != nil {
 		encrypted, err := crypto.Encrypt(encKey, data)
 		if err != nil {
 			return 0, fmt.Errorf("encrypting: %w", err)
 		}
+		log.Printf("  uploading %s (encrypted, %s)", key, formatBytes(int64(len(encrypted))))
 		if err := dest.Upload(ctx, key+".enc", bytes.NewReader(encrypted)); err != nil {
 			return 0, err
 		}
 		return int64(len(encrypted)), nil
 	}
 
+	log.Printf("  uploading %s (%s)", key, formatBytes(int64(len(data))))
 	if err := dest.Upload(ctx, key, bytes.NewReader(data)); err != nil {
 		return 0, err
 	}
@@ -239,19 +266,33 @@ func encryptionKey(enc *config.Encryption) (*encryptionInfo, []byte, error) {
 	}, key, nil
 }
 
-func writeSimpleManifest(ctx context.Context, dest storage.Storage, key, planName, snapID string, encInfo *encryptionInfo) error {
-	type simpleManifest struct {
-		Snapshot   string          `json:"snapshot"`
-		Plan       string          `json:"plan"`
-		Timestamp  string          `json:"timestamp"`
-		Encryption *encryptionInfo `json:"encryption,omitempty"`
+type sourceEntry struct {
+	Type  string         `json:"type"`
+	Key   string         `json:"key,omitempty"`
+	Files []fileBlockRef `json:"files,omitempty"`
+}
+
+func writeSnapshotManifest(ctx context.Context, dest storage.Storage, key, planName, snapID string, totalSize int64, sources []sourceEntry, tags map[string]string, encInfo *encryptionInfo) error {
+	type snapManifest struct {
+		Snapshot   string            `json:"snapshot"`
+		Plan       string            `json:"plan"`
+		Timestamp  string            `json:"timestamp"`
+		Size       int64             `json:"size"`
+		Sources    []sourceEntry     `json:"sources"`
+		Encryption *encryptionInfo   `json:"encryption,omitempty"`
+		Tags       map[string]string `json:"tags,omitempty"`
 	}
-	sm := simpleManifest{
+
+	sm := snapManifest{
 		Snapshot:   snapID,
 		Plan:       planName,
 		Timestamp:  time.Now().UTC().Format(time.RFC3339),
+		Size:       totalSize,
+		Sources:    sources,
+		Tags:       tags,
 		Encryption: encInfo,
 	}
+
 	data, err := json.MarshalIndent(sm, "", "  ")
 	if err != nil {
 		return err

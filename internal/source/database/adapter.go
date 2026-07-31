@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"strings"
 )
 
 type AdapterConfig struct {
@@ -37,4 +38,51 @@ func availableAdapters() []string {
 		names = append(names, n)
 	}
 	return names
+}
+
+type dsnParts struct {
+	User     string
+	Password string
+	Host     string
+	Port     string
+	Database string
+}
+
+func parseDSN(dsn string) *dsnParts {
+	raw := dsn
+	if idx := strings.Index(raw, "://"); idx >= 0 {
+		raw = raw[idx+3:]
+	}
+
+	lastAt := strings.LastIndex(raw, "@")
+	if lastAt < 0 {
+		return nil
+	}
+
+	userinfo := raw[:lastAt]
+	hostpart := raw[lastAt+1:]
+
+	var p dsnParts
+
+	if colon := strings.Index(userinfo, ":"); colon >= 0 {
+		p.User = userinfo[:colon]
+		p.Password = userinfo[colon+1:]
+	} else {
+		p.User = userinfo
+	}
+
+	host := hostpart
+	if slash := strings.Index(hostpart, "/"); slash >= 0 {
+		host = hostpart[:slash]
+		p.Database = hostpart[slash+1:]
+	}
+
+	if colon := strings.Index(host, ":"); colon >= 0 {
+		p.Host = host[:colon]
+		p.Port = host[colon+1:]
+	} else {
+		p.Host = host
+	}
+
+	return &p
 }

@@ -4,8 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"net/url"
-	"strings"
 )
 
 func init() {
@@ -35,25 +33,23 @@ func (m *mysqlAdapter) execDump(ctx context.Context) (io.ReadCloser, error) {
 		cmd:  m.cfg.DumpTool,
 		dsn:  m.cfg.DSN,
 		parseDSN: func(dsn string) []string {
-			var args []string
-			u, err := url.Parse(dsn)
-			if err != nil {
+			p := parseDSN(dsn)
+			if p == nil {
 				return nil
 			}
-			if u.User != nil {
-				args = append(args, "-u"+u.User.Username())
-				if pass, ok := u.User.Password(); ok {
-					args = append(args, "-p"+pass)
-				}
+			var args []string
+			args = append(args, "-u"+p.User)
+			if p.Password != "" {
+				args = append(args, "-p"+p.Password)
 			}
-			host := u.Host
-			if host != "" {
-				args = append(args, "-h"+host)
+			args = append(args, "-h"+p.Host)
+			if p.Port != "" {
+				args = append(args, "-P"+p.Port)
 			}
-			db := strings.TrimPrefix(u.Path, "/")
-			if db != "" {
-				args = append(args, db)
+			if p.Database != "" {
+				args = append(args, p.Database)
 			}
+			args = append(args, "--no-tablespaces")
 			return args
 		},
 	}

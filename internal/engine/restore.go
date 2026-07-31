@@ -1,8 +1,6 @@
 package engine
 
 import (
-	"archive/tar"
-	"compress/gzip"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -30,17 +28,14 @@ func (e *Engine) Restore(ctx context.Context, plan string, snapshotID string, ta
 		return err
 	}
 
-	var generic struct {
-		Sources []struct {
-			Type  string         `json:"type"`
-			Files []fileBlockRef `json:"files"`
-		} `json:"sources"`
+	var manifest struct {
+		Sources []sourceEntry `json:"sources"`
 	}
-	if err := json.Unmarshal(manifestData, &generic); err != nil {
+	if err := json.Unmarshal(manifestData, &manifest); err != nil {
 		return fmt.Errorf("parsing manifest: %w", err)
 	}
 
-	for _, src := range generic.Sources {
+	for _, src := range manifest.Sources {
 		switch src.Type {
 		case "file":
 			fm := &fileManifest{Files: src.Files}
@@ -49,8 +44,10 @@ func (e *Engine) Restore(ctx context.Context, plan string, snapshotID string, ta
 			}
 
 		default:
-			srcKey := fmt.Sprintf("%s/snapshots/%s/sources/0.tar.gz", plan, snapshotID)
-			if err := e.restoreTarSource(ctx, dest, srcKey, target); err != nil {
+			if src.Key == "" {
+				return fmt.Errorf("missing source key for type %q", src.Type)
+			}
+			if err := e.restoreSource(ctx, dest, src.Key, target); err != nil {
 				return err
 			}
 		}
@@ -59,60 +56,26 @@ func (e *Engine) Restore(ctx context.Context, plan string, snapshotID string, ta
 	return nil
 }
 
-func (e *Engine) restoreTarSource(ctx context.Context, dest storage.Storage, srcKey, target string) error {
+func (e *Engine) restoreSource(ctx context.Context, dest storage.Storage, srcKey, target string) error {
 	r, err := dest.Download(ctx, srcKey)
 	if err != nil {
-		return fmt.Errorf("downloading source: %w", err)
+		return fmt.Errorf("downloading %q: %w", srcKey, err)
 	}
 	if r == nil {
 		return fmt.Errorf("source %q not found", srcKey)
 	}
 	defer r.Close()
 
-	return untar(r, target)
-}
-
-func untar(r io.Reader, target string) error {
-	gzr, err := gzip.NewReader(r)
+	data, err := io.ReadAll(r)
 	if err != nil {
 		return err
 	}
-	defer gzr.Close()
 
-	tr := tar.NewReader(gzr)
-
-	for {
-		header, err := tr.Next()
-		if err == io.EOF {
-			break
-		}
-		if err != nil {
-			return err
-		}
-
-		path := filepath.Join(target, header.Name)
-		info := header.FileInfo()
-
-		switch header.Typeflag {
-		case tar.TypeDir:
-			if err := os.MkdirAll(path, info.Mode()); err != nil {
-				return err
-			}
-		case tar.TypeReg:
-			if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
-				return err
-			}
-			f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY, info.Mode())
-			if err != nil {
-				return err
-			}
-			if _, err := io.Copy(f, tr); err != nil {
-				f.Close()
-				return err
-			}
-			f.Close()
-		}
+	if err := os.MkdirAll(target, 0755); err != nil {
+		return fmt.Errorf("creating target dir: %w", err)
 	}
-
-	return nil
+	out := filepath.Join(target, filepath.Base(srcKey))
+	return os.WriteFile(out, data, 0644)
 }
+
+
