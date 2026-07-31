@@ -11,6 +11,8 @@ import (
 )
 
 func newRestoreCmd() *cobra.Command {
+	var dryRun bool
+
 	cmd := &cobra.Command{
 		Use:   "restore <plan-name> <snapshot-id>",
 		Short: "Restore a snapshot to a local directory",
@@ -44,6 +46,28 @@ func newRestoreCmd() *cobra.Command {
 			}
 
 			eng := engine.New(store)
+			if dryRun {
+				reports, err := eng.RestoreDryRun(cmd.Context(), *plan, snapshotID, dest)
+				if err != nil {
+					return fmt.Errorf("dry run failed: %w", err)
+				}
+				for _, rep := range reports {
+					switch rep.Type {
+					case "file":
+						fmt.Printf("would restore %d file(s), %d bytes in %d blocks\n", rep.Files, rep.Size, rep.Blocks)
+					case "database":
+						fmt.Printf("would restore database dump (%d blocks)\n", rep.Blocks)
+					default:
+						status := "missing"
+						if rep.Available {
+							status = "present"
+						}
+						fmt.Printf("would restore archive %s (%s)\n", rep.Key, status)
+					}
+				}
+				return nil
+			}
+
 			if err := eng.Restore(cmd.Context(), *plan, snapshotID, target, dest); err != nil {
 				return fmt.Errorf("restore failed: %w", err)
 			}
@@ -54,5 +78,6 @@ func newRestoreCmd() *cobra.Command {
 	}
 
 	cmd.Flags().StringP("target", "t", ".", "restore target directory")
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be restored without writing anything")
 	return cmd
 }

@@ -17,6 +17,9 @@ Global flag: `--config` / `-c` - path to config file (default `~/.backupd.yaml`)
 | `run <plan> --dry-run` | Report what would be uploaded without writing anything |
 | `check` | Validate the configuration and print a plan summary |
 | `restore <plan> <id>` | Restore a snapshot to the current directory |
+| `restore <plan> <id> --dry-run` | Report what would be restored without writing anything |
+| `prune <plan>` | Apply the plan's retention policy now, then garbage-collect orphaned blocks |
+| `prune <plan> --dry-run` | Report what would be deleted without deleting anything |
 | `daemon` | Run the scheduler daemon |
 | `verify <plan> [id]` | Verify snapshot integrity (all snapshots, or one) |
 | `export-systemd [plan]` | Generate systemd timer + service units |
@@ -62,11 +65,26 @@ backupd export-systemd server -o /etc/systemd/system
 
 ```shell
 backupd restore server <snapshot-id> --target /tmp/restore
+backupd restore server <snapshot-id> --dry-run   # report without writing
 ```
 
 - `--target` / `-t` - directory to restore into (defaults to the current directory)
+- `--dry-run` - read the manifest and report each source (file count, bytes, blocks) and whether
+  archive objects are present, without writing anything
 - File sources are reconstructed block-by-block from the manifest; other sources are written as
   their stored archive (`.sql`, `.tar`).
+
+## prune
+
+```shell
+backupd prune server               # apply retention now
+backupd prune server --dry-run     # report what would be deleted
+```
+
+Pruning normally happens automatically after every successful backup run; `prune` applies the
+plan's retention policy on demand, deleting the snapshots the policy no longer keeps and then
+garbage-collecting orphaned blocks. With `--dry-run` nothing is deleted - the snapshots and
+orphaned blocks that would be removed are reported.
 
 ## verify
 

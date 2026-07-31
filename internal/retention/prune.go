@@ -14,6 +14,8 @@ import (
 
 type Pruner struct {
 	store *state.Store
+	// DryRun reports what would be deleted without deleting anything.
+	DryRun bool
 }
 
 func NewPruner(store *state.Store) *Pruner {
@@ -41,9 +43,17 @@ func (p *Pruner) Prune(ctx context.Context, plan string, policy Policy, dest sto
 		return nil
 	}
 
-	log.Printf("prune %q: deleting %d snapshots", plan, len(toDelete))
+	verb := "deleting"
+	if p.DryRun {
+		verb = "would delete"
+	}
+	log.Printf("prune %q: %s %d snapshots", plan, verb, len(toDelete))
 
 	for _, snap := range toDelete {
+		if p.DryRun {
+			log.Printf("prune %q: would delete snapshot %s (from %s)", plan, snap.ID, snap.Timestamp.Format("2006-01-02 15:04"))
+			continue
+		}
 		if err := p.deleteSnapshot(ctx, dest, plan, snap.ID); err != nil {
 			log.Printf("error deleting snapshot %s from storage: %v", snap.ID, err)
 			continue
@@ -91,6 +101,10 @@ func (p *Pruner) GCBlocks(ctx context.Context, plan string, dest storage.Storage
 	var orphaned int
 	for id := range allBlocks {
 		if !usedBlocks[id] {
+			if p.DryRun {
+				orphaned++
+				continue
+			}
 			blockKey := fmt.Sprintf("%s/blocks/%s", plan, id)
 			if err := dest.Delete(ctx, blockKey); err != nil {
 				log.Printf("error deleting orphan block %s: %v", id, err)
@@ -101,7 +115,11 @@ func (p *Pruner) GCBlocks(ctx context.Context, plan string, dest storage.Storage
 	}
 
 	if orphaned > 0 {
-		log.Printf("gc %q: removed %d orphaned blocks", plan, orphaned)
+		if p.DryRun {
+			log.Printf("gc %q: would remove %d orphaned blocks", plan, orphaned)
+		} else {
+			log.Printf("gc %q: removed %d orphaned blocks", plan, orphaned)
+		}
 	}
 
 	return nil

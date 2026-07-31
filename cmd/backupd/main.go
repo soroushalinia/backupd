@@ -46,6 +46,7 @@ func main() {
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newHistoryCmd())
 	cmd.AddCommand(newRestoreCmd())
+	cmd.AddCommand(newPruneCmd())
 	cmd.AddCommand(newDaemonCmd())
 	cmd.AddCommand(newExportSystemdCmd())
 	cmd.AddCommand(newCompletionCmd())

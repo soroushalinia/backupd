@@ -204,6 +204,47 @@ func TestPruneKeepsDatabaseDumpBlocks(t *testing.T) {
 	}
 }
 
+func TestPruneDryRunDeletesNothing(t *testing.T) {
+	store, err := state.New(t.TempDir() + "/test.db")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	dest := newMockStorage()
+	plan := "test-plan"
+	now := time.Now().UTC()
+
+	for i, id := range []string{"a", "b", "c"} {
+		store.RecordSnapshot(config.Snapshot{
+			ID: id, Plan: plan, Timestamp: now.AddDate(0, 0, -i), Size: 100,
+		})
+		dest.objects[plan+"/snapshots/"+id+"/manifest.json"] = []byte(`{}`)
+	}
+	// An orphaned block the dry run should report but not remove.
+	orphan := plan + "/blocks/deadbeef"
+	dest.objects[orphan] = []byte("orphan")
+
+	pruner := NewPruner(store)
+	pruner.DryRun = true
+	if err := pruner.Prune(context.Background(), plan, Policy{KeepLast: 2}, dest); err != nil {
+		t.Fatal(err)
+	}
+
+	for _, id := range []string{"a", "b", "c"} {
+		key := plan + "/snapshots/" + id + "/manifest.json"
+		if _, ok := dest.objects[key]; !ok {
+			t.Errorf("dry run deleted %s", key)
+		}
+	}
+	if _, ok := dest.objects[orphan]; !ok {
+		t.Error("dry run deleted orphaned block")
+	}
+	if snaps, _ := store.ListSnapshots(plan); len(snaps) != 3 {
+		t.Errorf("dry run changed state: %d snapshots", len(snaps))
+	}
+}
+
 func TestGCBlocksDeletesOrphans(t *testing.T) {
 	store, err := state.New(t.TempDir() + "/test.db")
 	if err != nil {

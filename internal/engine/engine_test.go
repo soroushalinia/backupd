@@ -855,6 +855,69 @@ func blockIDFor(block []byte) string {
 	return hex.EncodeToString(sum[:])
 }
 
+func TestRestoreDryRun(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.MkdirAll(filepath.Join(dir, "sub"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "sub", "b.txt"), []byte("world!"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "dry-plan",
+		Sources: []config.Source{
+			{Type: "file", Path: dir},
+		},
+		Destination: config.Destination{Type: "s3", Bucket: "b", Endpoint: "e"},
+	}
+
+	res, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	reports, err := eng.RestoreDryRun(context.Background(), plan, res.SnapshotID, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(reports) != 1 || reports[0].Type != "file" {
+		t.Fatalf("reports = %+v, want one file source", reports)
+	}
+	if reports[0].Files != 2 {
+		t.Errorf("files = %d, want 2", reports[0].Files)
+	}
+	if reports[0].Size != 11 {
+		t.Errorf("size = %d, want 11", reports[0].Size)
+	}
+
+	// The dry run must not write anything.
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(entries) != 2 {
+		t.Errorf("source dir changed after dry run: %d entries", len(entries))
+	}
+
+	// A missing snapshot reports an error.
+	if _, err := eng.RestoreDryRun(context.Background(), plan, "nonexistent", st); err == nil {
+		t.Fatal("expected error for missing snapshot")
+	}
+}
+
 func TestIsExcluded(t *testing.T) {
 	cases := []struct {
 		name    string
