@@ -114,9 +114,10 @@ Blocks shared with surviving snapshots are kept.
 
 With `encryption.passphrase` set, every byte of content is encrypted before upload:
 
-- **Key derivation**: the passphrase is stretched with **Argon2id** into a 256-bit key. Each
-  snapshot gets a random salt, stored in its manifest, so the same passphrase yields a different
-  key per snapshot.
+- **Key derivation**: the passphrase is stretched with **Argon2id** into a 256-bit key. The
+  salt is generated on the first run and reused for the plan's lifetime (loaded from the most
+  recent manifest), so every snapshot of a plan shares the same key - which keeps block
+  deduplication working across runs while the passphrase is unchanged.
 - **Blocks (files)**: each block is encrypted with **AES-256-GCM** using a *convergent* scheme -
   the key and nonce are derived (via HMAC) from the master key and the block's plaintext hash,
   and the plaintext hash is bound as the AEAD's additional authenticated data. Encryption is

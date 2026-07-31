@@ -267,6 +267,98 @@ func TestEngineRunIncremental(t *testing.T) {
 	}
 }
 
+func TestEngineRunIncrementalEncrypted(t *testing.T) {
+	src := t.TempDir()
+	content := []byte(strings.Repeat("abc123", 10000))
+	if err := os.WriteFile(filepath.Join(src, "data.txt"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "inc-enc-test",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+		Encryption: &config.Encryption{Passphrase: "correct horse battery staple"},
+	}
+
+	first, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blocksAfterFirst := 0
+	for key := range st.data {
+		if strings.HasPrefix(key, "inc-enc-test/blocks/") {
+			blocksAfterFirst++
+		}
+	}
+
+	second, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Size != 0 {
+		t.Errorf("expected zero uploaded bytes for unchanged file, got %d", second.Size)
+	}
+
+	blocksAfterSecond := 0
+	for key := range st.data {
+		if strings.HasPrefix(key, "inc-enc-test/blocks/") {
+			blocksAfterSecond++
+		}
+	}
+	if blocksAfterSecond != blocksAfterFirst {
+		t.Errorf("unchanged file re-uploaded blocks: before=%d after=%d", blocksAfterFirst, blocksAfterSecond)
+	}
+
+	// The regression: the second run reused blocks encrypted with the
+	// first run's key. Every snapshot must be verifiable and restorable,
+	// because later manifests reference blocks from earlier runs.
+	for _, id := range []string{first.SnapshotID, second.SnapshotID} {
+		if err := eng.Verify(context.Background(), plan, id, st); err != nil {
+			t.Errorf("verify snapshot %s: %v", id, err)
+		}
+
+		dst := t.TempDir()
+		if err := eng.Restore(context.Background(), plan, id, dst, st); err != nil {
+			t.Fatalf("restore snapshot %s: %v", id, err)
+		}
+		got, err := os.ReadFile(filepath.Join(dst, "data.txt"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, content) {
+			t.Errorf("snapshot %s restored %d bytes, want %d", id, len(got), len(content))
+		}
+	}
+
+	// A changed file must encrypt with the same key and dedup to a new
+	// object, leaving the previous one untouched.
+	if err := os.WriteFile(filepath.Join(src, "data.txt"), append(content, []byte("extra")...), 0644); err != nil {
+		t.Fatal(err)
+	}
+	third, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.Verify(context.Background(), plan, third.SnapshotID, st); err != nil {
+		t.Errorf("verify snapshot 3: %v", err)
+	}
+}
+
 func TestSafeJoin(t *testing.T) {
 	target := t.TempDir()
 

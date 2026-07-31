@@ -156,7 +156,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		tags[k] = v
 	}
 
-	encInfo, encKey, err := encryptionKey(plan.Encryption)
+	encInfo, encKey, err := e.encryptionKey(ctx, dest, plan)
 	if err != nil {
 		return 0, fmt.Errorf("encryption setup: %w", err)
 	}
@@ -343,19 +343,72 @@ type encryptionInfo struct {
 	Salt      []byte `json:"salt,omitempty"`
 }
 
-func encryptionKey(enc *config.Encryption) (*encryptionInfo, []byte, error) {
+// encryptionKey returns the plan's encryption parameters. The salt is
+// stable for the lifetime of a plan: the first run generates it and later
+// runs reuse the salt recorded in the most recent manifest. A stable salt
+// means a stable key, which is what makes content-addressed block
+// deduplication work across runs (same plaintext, same ciphertext, same
+// object id). A per-run salt would make every later manifest refer to
+// blocks that can no longer be decrypted.
+func (e *Engine) encryptionKey(ctx context.Context, dest storage.Storage, plan config.Plan) (*encryptionInfo, []byte, error) {
+	enc := plan.Encryption
 	if enc == nil || enc.Passphrase == "" {
 		return nil, nil, nil
 	}
-	salt, err := crypto.GenerateSalt()
+
+	salt, err := e.snapshotSalt(ctx, dest, plan.Name)
 	if err != nil {
 		return nil, nil, err
 	}
+	if salt == nil {
+		salt, err = crypto.GenerateSalt()
+		if err != nil {
+			return nil, nil, err
+		}
+	}
+
 	return &encryptionInfo{
 		Algorithm: "AES-256-GCM",
 		KDF:       "Argon2id",
 		Salt:      salt,
 	}, crypto.DeriveKey(enc.Passphrase, salt), nil
+}
+
+// snapshotSalt loads the salt from the most recent snapshot manifest of a
+// plan, or nil when no snapshot exists yet. An existing snapshot without
+// a usable manifest is an error: continuing with a fresh salt would
+// produce manifests that cannot be decrypted with their own blocks.
+func (e *Engine) snapshotSalt(ctx context.Context, dest storage.Storage, planName string) ([]byte, error) {
+	snapshots, err := e.store.ListSnapshots(planName)
+	if err != nil {
+		return nil, err
+	}
+	if len(snapshots) == 0 {
+		return nil, nil
+	}
+
+	manifestKey := fmt.Sprintf("%s/snapshots/%s/manifest.json", planName, snapshots[len(snapshots)-1].ID)
+	r, err := dest.Download(ctx, manifestKey)
+	if err != nil {
+		return nil, fmt.Errorf("loading previous manifest for encryption salt: %w", err)
+	}
+	if r == nil {
+		return nil, fmt.Errorf("previous snapshot %s has no manifest in storage", snapshots[len(snapshots)-1].ID)
+	}
+	defer r.Close()
+
+	var manifest struct {
+		Encryption *struct {
+			Salt []byte `json:"salt"`
+		} `json:"encryption,omitempty"`
+	}
+	if err := json.NewDecoder(r).Decode(&manifest); err != nil {
+		return nil, err
+	}
+	if manifest.Encryption == nil {
+		return nil, fmt.Errorf("previous snapshot %s is not encrypted", snapshots[len(snapshots)-1].ID)
+	}
+	return manifest.Encryption.Salt, nil
 }
 
 // planKey derives the encryption key for a snapshot from the plan's

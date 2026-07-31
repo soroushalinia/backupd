@@ -19,8 +19,10 @@ The snapshot manifest (paths, sizes, hashes) stays plaintext so incremental runs
 
 ## How it works
 
-- The passphrase is derived into a 256-bit key using **Argon2id**. Each snapshot gets a random
-  salt stored in its manifest, so the same passphrase produces a different key per snapshot.
+- The passphrase is derived into a 256-bit key using **Argon2id**. The salt is generated on the
+  first run and reused for the plan's lifetime (loaded from the most recent manifest), so the
+  same passphrase always yields the same key for a plan - required for cross-snapshot block
+  deduplication. Changing the passphrase changes the key and therefore the ciphertext.
 - **Blocks** use convergent AES-256-GCM: the block's key and nonce are derived from the master
   key and the block's plaintext hash, and that hash is bound as authenticated data. Encryption is
   deterministic - the same content always encrypts to the same ciphertext, so deduplication works
@@ -44,7 +46,8 @@ run.
 
 ## Changing the passphrase
 
-Each snapshot is encrypted with the passphrase that was configured at the time of its run (plus
-its own random salt). Changing `encryption.passphrase` affects new snapshots only - to restore
+Each snapshot is encrypted with the passphrase that was configured at the time of its run (the
+plan's salt is stable, so the key depends only on the passphrase). Changing
+`encryption.passphrase` affects new snapshots only - to restore
 older snapshots, temporarily set the config back to the passphrase that was active when they were
 created. Keep old passphrases recorded until you are done restoring old snapshots.
