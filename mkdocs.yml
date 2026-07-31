@@ -1,0 +1,47 @@
+site_name: backupd
+site_description: Declarative S3-compatible backup daemon with delta-deduplication, encryption, retention, and scheduling
+repo_url: https://github.com/soroushalinia/backupd
+edit_uri: blob/main/docs/
+
+theme:
+  name: material
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.instant
+    - navigation.tracking
+    - navigation.top
+    - content.code.copy
+
+markdown_extensions:
+  - admonition
+  - toc:
+      permalink: true
+  - pymdownx.superfences
+  - pymdownx.highlight
+  - pymdownx.inlinehilite
+  - pymdownx.tabbed
+  - pymdownx.details
+
+nav:
+  - Home: index.md
+  - Installation: installation.md
+  - Quick Start: quickstart.md
+  - Configuration: configuration.md
+  - Sources: sources.md
+  - Encryption: encryption.md
+  - Retention: retention.md
+  - Hooks: hooks.md
+  - Scheduling: scheduling.md
+  - CLI Reference: cli.md
