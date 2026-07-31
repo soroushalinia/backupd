@@ -3,6 +3,9 @@ package engine
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -639,6 +642,217 @@ func TestUploadMultipartRoundTrip(t *testing.T) {
 	if !bytes.Equal(got, content) {
 		t.Fatal("restored multipart archive mismatch")
 	}
+}
+
+func TestEngineLargeFile(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "big.bin")
+
+	// ~96 MiB of non-repeating content so every block is distinct.
+	const size = 96 * 1024 * 1024
+	content := make([]byte, size)
+	x := uint64(0x9e3779b97f4a7c15)
+	for i := range content {
+		x ^= x << 13
+		x ^= x >> 7
+		x ^= x << 17
+		content[i] = byte(x)
+	}
+	if err := os.WriteFile(path, content, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "large-plan",
+		Sources: []config.Source{
+			{Type: "file", Path: dir},
+		},
+		Destination: config.Destination{Type: "s3", Bucket: "b", Endpoint: "e"},
+	}
+
+	first, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if first.Size < size-8192 {
+		t.Errorf("uploaded %d bytes, want ~%d", first.Size, size)
+	}
+
+	// An unchanged tree uploads nothing, even for a large file.
+	second, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Size != 0 {
+		t.Errorf("expected zero upload for unchanged tree, got %d", second.Size)
+	}
+
+	if err := eng.Verify(context.Background(), plan, first.SnapshotID, st); err != nil {
+		t.Errorf("verify: %v", err)
+	}
+
+	dst := t.TempDir()
+	if err := eng.Restore(context.Background(), plan, first.SnapshotID, dst, st); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dst, "big.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatal("restored large file mismatch")
+	}
+}
+
+// A malicious manifest pointing outside the restore target must fail the
+// restore at the engine level, for regular files and hardlink targets.
+func TestRestoreRejectsTraversal(t *testing.T) {
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	block := []byte("some block content")
+	blockID := blockIDFor(block)
+
+	eng := New(store)
+	st := &testStorage{}
+	st.data = map[string][]byte{
+		"evil-plan/blocks/" + blockID: block,
+	}
+
+	plan := config.Plan{
+		Name:        "evil-plan",
+		Destination: config.Destination{Type: "s3", Bucket: "b", Endpoint: "e"},
+	}
+
+	manifest := map[string]any{
+		"sources": []any{
+			map[string]any{
+				"type": "file",
+				"files": []any{
+					map[string]any{
+						"path": "../evil.txt",
+						"size": len(block),
+						"mode": 0o644,
+						"blocks": []any{
+							map[string]any{"id": blockID, "hash": blockID},
+						},
+					},
+				},
+			},
+		},
+	}
+	raw, err := json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.data["evil-plan/snapshots/s1/manifest.json"] = raw
+
+	target := t.TempDir()
+	if err := eng.Restore(context.Background(), plan, "s1", target, st); err == nil {
+		t.Fatal("expected restore to fail for traversal path")
+	}
+	if _, err := os.Stat(filepath.Join(target, "evil.txt")); !os.IsNotExist(err) {
+		t.Fatal("traversal file was written outside the manifest path")
+	}
+	if _, err := os.Stat(filepath.Dir(target) + "/evil.txt"); !os.IsNotExist(err) {
+		t.Fatal("file escaped the restore target")
+	}
+
+	// Hardlink targets are validated too.
+	manifest["sources"] = []any{
+		map[string]any{
+			"type": "file",
+			"files": []any{
+				map[string]any{
+					"path":        "safe.txt",
+					"size":        len(block),
+					"mode":        0o644,
+					"blocks":      []any{map[string]any{"id": blockID, "hash": blockID}},
+					"hardlink_of": "",
+				},
+				map[string]any{
+					"path":        "linked.txt",
+					"size":        len(block),
+					"mode":        0o644,
+					"hardlink_of": "../escaped-link.txt",
+				},
+			},
+		},
+	}
+	raw, err = json.Marshal(manifest)
+	if err != nil {
+		t.Fatal(err)
+	}
+	st.data["evil-plan/snapshots/s2/manifest.json"] = raw
+
+	if err := eng.Restore(context.Background(), plan, "s2", target, st); err == nil {
+		t.Fatal("expected restore to fail for traversal hardlink target")
+	}
+}
+
+// A failed run with a plain file source (no docker required) must not
+// record a snapshot, and a later run must succeed and clean up.
+func TestFailedRunWithFileSource(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "file-plan",
+		Sources: []config.Source{
+			{Type: "file", Path: dir},
+		},
+		Destination: config.Destination{Type: "s3", Bucket: "b", Endpoint: "e"},
+	}
+
+	fs := &failStorage{testStorage: *st, failOn: "manifest.json"}
+	if _, err := eng.Run(context.Background(), plan, fs); err == nil {
+		t.Fatal("expected run to fail")
+	}
+	last, err := store.LastSnapshot(plan.Name)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if last != nil {
+		t.Fatal("failed run recorded a snapshot")
+	}
+
+	// A fresh run against the same data succeeds.
+	fs2 := &failStorage{testStorage: *st, failOn: "never-match"}
+	res, err := eng.Run(context.Background(), plan, fs2)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := eng.Verify(context.Background(), plan, res.SnapshotID, fs2); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func blockIDFor(block []byte) string {
+	sum := sha256.Sum256(block)
+	return hex.EncodeToString(sum[:])
 }
 
 func TestIsExcluded(t *testing.T) {
