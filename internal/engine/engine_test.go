@@ -63,6 +63,10 @@ func (s *testStorage) SetTags(ctx context.Context, key string, tags map[string]s
 	return nil
 }
 
+func (s *testStorage) UploadMultipart(ctx context.Context, key string, r io.Reader) error {
+	return s.Upload(ctx, key, r)
+}
+
 func TestEngineRun(t *testing.T) {
 	dir := t.TempDir()
 	if err := os.WriteFile(filepath.Join(dir, "hello.txt"), []byte("world"), 0644); err != nil {
@@ -546,6 +550,57 @@ func TestUploadAndRestoreSourceRoundTrip(t *testing.T) {
 	}
 }
 
+type multipartRecordingStorage struct {
+	testStorage
+	multipartCalls int
+}
+
+func (m *multipartRecordingStorage) UploadMultipart(ctx context.Context, key string, r io.Reader) error {
+	m.multipartCalls++
+	return m.testStorage.UploadMultipart(ctx, key, r)
+}
+
+func TestUploadMultipartRoundTrip(t *testing.T) {
+	st := &multipartRecordingStorage{}
+	ctx := context.Background()
+
+	// Large enough to require several 8 MiB parts if the storage chunked.
+	content := bytes.Repeat([]byte("mp-data-"), 2*1024*1024)
+	encKey := []byte("0123456789abcdef0123456789abcdef")
+
+	size, err := uploadAndEncrypt(ctx, st, "plan/snap/sources/0.tar", bytes.NewReader(content), encKey, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if size != int64(len(content)) {
+		t.Errorf("size = %d, want %d (plaintext bytes)", size, len(content))
+	}
+	if st.multipartCalls != 1 {
+		t.Errorf("multipart calls = %d, want 1 (spool path used)", st.multipartCalls)
+	}
+
+	plain, ok := st.data["plan/snap/sources/0.tar.enc"]
+	if !ok {
+		t.Fatal("encrypted multipart object not stored")
+	}
+	if bytes.Contains(plain, content) {
+		t.Fatal("stored archive contains plaintext")
+	}
+
+	eng := New(nil)
+	dst := t.TempDir()
+	if err := eng.restoreSource(ctx, st, "plan/snap/sources/0.tar", dst, encKey, nil); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dst, "0.tar"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatal("restored multipart archive mismatch")
+	}
+}
+
 func TestIsExcluded(t *testing.T) {
 	cases := []struct {
 		name    string
@@ -586,6 +641,10 @@ func (s *failStorage) Upload(ctx context.Context, key string, r io.Reader) error
 		return fmt.Errorf("injected failure for %s", key)
 	}
 	return s.testStorage.Upload(ctx, key, r)
+}
+
+func (s *failStorage) UploadMultipart(ctx context.Context, key string, r io.Reader) error {
+	return s.Upload(ctx, key, r)
 }
 
 func TestEngineFileSourceSymlinksAndEmptyDirs(t *testing.T) {

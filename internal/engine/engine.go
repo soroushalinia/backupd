@@ -314,10 +314,14 @@ func uploadAndEncrypt(ctx context.Context, dest storage.Storage, key string, r i
 		pr = progress.NewReader(ratelimit.NewReader(ctx, pr, limiter), key)
 	}
 
-	// Spool the stream to a temp file so the upload has a known size:
-	// Spool the stream to a temp file so the upload has a known size:
-	// S3 single PUT is limited to 5 GiB, and minio-go only switches to
-	// multipart upload when the size is known.
+	// Streaming multipart: no spooling, memory bounded by one part.
+	if mp, ok := dest.(storage.MultipartUploader); ok {
+		return uploadMultipart(ctx, mp, key, pr, encKey)
+	}
+
+	// Fallback: spool the stream to a temp file so the upload has a known
+	// size - S3 single PUT is limited to 5 GiB, and minio-go only switches
+	// to multipart upload when the size is known.
 	plain, err := os.CreateTemp("", "backupd-plain-*")
 	if err != nil {
 		return 0, fmt.Errorf("spooling source: %w", err)
@@ -373,6 +377,54 @@ func uploadAndEncrypt(ctx context.Context, dest storage.Storage, key string, r i
 		return 0, err
 	}
 	return size, nil
+}
+
+// countingReader tracks how many bytes a reader produced.
+type countingReader struct {
+	r io.Reader
+	n int64
+}
+
+func (c *countingReader) Read(p []byte) (int, error) {
+	n, err := c.r.Read(p)
+	c.n += int64(n)
+	return n, err
+}
+
+// uploadMultipart streams an archive to a MultipartUploader, encrypting in
+// flight when encKey is set. Nothing is buffered beyond one part (and the
+// stream-encryption pipe), so multi-GB dumps no longer touch disk.
+func uploadMultipart(ctx context.Context, mp storage.MultipartUploader, key string, pr *progress.Reader, encKey []byte) (int64, error) {
+	cr := &countingReader{r: pr}
+
+	if encKey == nil {
+		log.Printf("  uploading %s (multipart)", key)
+		if err := mp.UploadMultipart(ctx, key, cr); err != nil {
+			return 0, err
+		}
+		pr.Done()
+		return cr.n, nil
+	}
+
+	log.Printf("  uploading %s (encrypted, multipart)", key)
+	pipeR, pipeW := io.Pipe()
+	errCh := make(chan error, 1)
+	go func() {
+		err := crypto.StreamEncrypt(encKey, cr, pipeW)
+		pipeW.CloseWithError(err)
+		errCh <- err
+	}()
+
+	mpErr := mp.UploadMultipart(ctx, key+".enc", pipeR)
+	encErr := <-errCh
+	if mpErr != nil {
+		return 0, mpErr
+	}
+	if encErr != nil {
+		return 0, fmt.Errorf("encrypting: %w", encErr)
+	}
+	pr.Done()
+	return cr.n, nil
 }
 
 type encryptionInfo struct {
@@ -491,6 +543,8 @@ type discardStorage struct {
 }
 
 func (discardStorage) Upload(context.Context, string, io.Reader) error { return nil }
+
+func (discardStorage) UploadMultipart(context.Context, string, io.Reader) error { return nil }
 
 func (discardStorage) Delete(context.Context, string) error { return nil }
 

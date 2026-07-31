@@ -1,9 +1,11 @@
 package storage
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
+	"log"
 	"strings"
 
 	"github.com/minio/minio-go/v7"
@@ -155,4 +157,59 @@ func (s *S3Client) Exists(ctx context.Context, key string) (bool, error) {
 		return false, err
 	}
 	return true, nil
+}
+
+// multipartPartSize is the S3 part size for streaming uploads. S3 requires
+// every part except the last to be at least 5 MiB.
+const multipartPartSize = 8 * 1024 * 1024
+
+// UploadMultipart streams an unknown-size reader to S3 as a multipart
+// upload with fixed-size parts, keeping memory bounded by one part. The
+// upload is aborted (not left dangling) on any failure.
+func (s *S3Client) UploadMultipart(ctx context.Context, key string, r io.Reader) error {
+	core := minio.Core{Client: s.client}
+	objKey := s.key(key)
+
+	uploadID, err := core.NewMultipartUpload(ctx, s.bucket, objKey, minio.PutObjectOptions{ContentType: "application/octet-stream"})
+	if err != nil {
+		return fmt.Errorf("creating multipart upload %q: %w", key, err)
+	}
+
+	abort := func() {
+		if err := core.AbortMultipartUpload(ctx, s.bucket, objKey, uploadID); err != nil {
+			log.Printf("warning: aborting multipart upload %s: %v", objKey, err)
+		}
+	}
+
+	var parts []minio.CompletePart
+	partID := 1
+	buf := make([]byte, multipartPartSize)
+	for {
+		n, err := io.ReadFull(r, buf)
+		if n == 0 && err == io.EOF {
+			break
+		}
+		if n == 0 && err != nil {
+			abort()
+			return fmt.Errorf("reading for multipart upload %q: %w", key, err)
+		}
+
+		part, perr := core.PutObjectPart(ctx, s.bucket, objKey, uploadID, partID, bytes.NewReader(buf[:n]), int64(n), minio.PutObjectPartOptions{})
+		if perr != nil {
+			abort()
+			return fmt.Errorf("uploading part %d of %q: %w", partID, key, perr)
+		}
+		parts = append(parts, minio.CompletePart{PartNumber: partID, ETag: part.ETag})
+		partID++
+
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+
+	if _, err := core.CompleteMultipartUpload(ctx, s.bucket, objKey, uploadID, parts, minio.PutObjectOptions{ContentType: "application/octet-stream"}); err != nil {
+		abort()
+		return fmt.Errorf("completing multipart upload %q: %w", key, err)
+	}
+	return nil
 }

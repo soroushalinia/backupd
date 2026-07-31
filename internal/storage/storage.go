@@ -14,6 +14,13 @@ type Storage interface {
 	SetTags(ctx context.Context, key string, tags map[string]string) error
 }
 
+// MultipartUploader is an optional capability: storages that implement it
+// accept streams without a known size and chunk them internally. Engines
+// prefer it over spooling to a temporary file.
+type MultipartUploader interface {
+	UploadMultipart(ctx context.Context, key string, r io.Reader) error
+}
+
 type ObjectInfo struct {
 	Key          string
 	Size         int64

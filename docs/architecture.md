@@ -139,9 +139,10 @@ backupd streams instead of buffering:
 - File backup and restore move one 8 KiB block at a time; the whole file is never in memory (the
   second read of a changed file typically hits the page cache). Database dumps go through the same
   block pipeline.
-- Container (docker, kubernetes) dumps are spooled to a temporary file on disk so the upload size
-  is known. This enables S3 **multipart uploads** for large sources - a single PUT is limited to
-  5 GiB, and the S3 client needs the size up front to switch to multipart.
+- Container (docker, kubernetes) archives are uploaded as **streaming multipart** in 8 MiB parts -
+  no temporary files, memory bounded by one part, and the upload is aborted cleanly on failure.
+  Storages without multipart support fall back to spooling the stream to a temporary file so the
+  upload size is known (a single S3 PUT is limited to 5 GiB).
 - Restores and `verify` stream block-by-block and chunk-by-chunk, decrypting as they go.
 
 ## Rate limiting
