@@ -4,7 +4,7 @@
 backupd [--config <path>] <command>
 ```
 
-Global flag: `--config` / `-c` — path to config file (default `~/.backupd.yaml`).
+Global flag: `--config` / `-c` - path to config file (default `~/.backupd.yaml`).
 
 ## Commands
 
@@ -64,7 +64,7 @@ backupd export-systemd server -o /etc/systemd/system
 backupd restore server <snapshot-id> --target /tmp/restore
 ```
 
-- `--target` / `-t` — directory to restore into (defaults to the current directory)
+- `--target` / `-t` - directory to restore into (defaults to the current directory)
 - File sources are reconstructed block-by-block from the manifest; other sources are written as
   their stored archive (`.sql`, `.tar`).
 
@@ -79,5 +79,5 @@ Checks that every object referenced by a snapshot's manifest exists and decrypts
 
 ## exit codes
 
-- `0` — success
-- non-zero — error (missing args, config errors, backup/restore failures)
+- `0` - success
+- non-zero - error (missing args, config errors, backup/restore failures)

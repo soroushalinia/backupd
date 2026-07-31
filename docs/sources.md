@@ -19,7 +19,7 @@ A plan can have any number of sources. Each source is one of four types: `file`,
 
 Files are backed up with the [delta algorithm](#delta-algorithm).
 
-Directories — including empty ones — are backed up with their permissions. Symlinks are stored as
+Directories - including empty ones - are backed up with their permissions. Symlinks are stored as
 their target path instead of being followed, so broken links are backed up fine and a link can
 never pull content from outside the source root. During restore, directories are created first,
 then regular files, then symlinks, so nothing is ever written through a restored symlink. Special
@@ -41,7 +41,7 @@ files (fifos, sockets, devices) are skipped with a warning.
 | `dsn`       | string | yes      | Connection string for the dump tool |
 | `dump-tool` | string | no       | Override the dump binary (default: `pg_dump`, `mysqldump`, `mongodump`, `sqlite3`) |
 
-The dump is piped to storage as a `.sql` (or `.dump`) object — no intermediate file on disk.
+The dump is piped to storage as a `.sql` (or `.dump`) object - no intermediate file on disk.
 
 ## Docker
 

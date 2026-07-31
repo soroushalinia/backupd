@@ -9,13 +9,13 @@ encryption:
 
 With a passphrase set, **all content** is encrypted before it reaches the bucket:
 
-- **Dedup blocks** (file contents) — each 8 KiB block individually, AES-256-GCM, convergent
+- **Dedup blocks** (file contents) - each 8 KiB block individually, AES-256-GCM, convergent
   encryption (see below).
-- **Source archives** (database dumps, Docker volumes, Kubernetes PVCs) — streamed as 1 MiB
+- **Source archives** (database dumps, Docker volumes, Kubernetes PVCs) - streamed as 1 MiB
   AES-256-GCM frames and stored with a `.enc` suffix.
 
 The snapshot manifest (paths, sizes, hashes) stays plaintext so incremental runs, `history`, and
-`status` work without a passphrase — it contains metadata, never content.
+`status` work without a passphrase - it contains metadata, never content.
 
 ## How it works
 
@@ -23,12 +23,12 @@ The snapshot manifest (paths, sizes, hashes) stays plaintext so incremental runs
   salt stored in its manifest, so the same passphrase produces a different key per snapshot.
 - **Blocks** use convergent AES-256-GCM: the block's key and nonce are derived from the master
   key and the block's plaintext hash, and that hash is bound as authenticated data. Encryption is
-  deterministic — the same content always encrypts to the same ciphertext, so deduplication works
+  deterministic - the same content always encrypts to the same ciphertext, so deduplication works
   on encrypted data while a different master key still yields unreadable ciphertext.
 - **Archives** are encrypted with a random nonce per stream in 1 MiB AEAD frames, which keeps
   memory use flat no matter how large the dump is.
 - On restore and `verify`, every block is decrypted and its plaintext hash re-checked, and every
-  archive stream is decrypted end-to-end — tampering or partial loss is detected, not silently
+  archive stream is decrypted end-to-end - tampering or partial loss is detected, not silently
   restored.
 
 !!! warning "Keep the passphrase safe"
@@ -45,6 +45,6 @@ run.
 ## Changing the passphrase
 
 Each snapshot is encrypted with the passphrase that was configured at the time of its run (plus
-its own random salt). Changing `encryption.passphrase` affects new snapshots only — to restore
+its own random salt). Changing `encryption.passphrase` affects new snapshots only - to restore
 older snapshots, temporarily set the config back to the passphrase that was active when they were
 created. Keep old passphrases recorded until you are done restoring old snapshots.

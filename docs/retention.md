@@ -20,7 +20,7 @@ be combined; a snapshot is kept if any policy keeps it.
 | `keep-weekly` | Keep N snapshots, one per week (most recent of each ISO week) |
 | `keep-monthly`| Keep N snapshots, one per month (most recent of each month) |
 
-Example — with the config above, backupd keeps:
+Example - with the config above, backupd keeps:
 
 - the 30 newest snapshots,
 - plus the newest snapshot of each of the last 7 days,

@@ -21,7 +21,7 @@ plans:
       keep-last: 30
 ```
 
-Validate the config — it prints a per-plan summary and flags problems like missing paths or bad
+Validate the config - it prints a per-plan summary and flags problems like missing paths or bad
 schedules:
 
 ```shell

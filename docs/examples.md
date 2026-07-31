@@ -114,7 +114,7 @@ plans:
 
 ## Local MinIO (no cloud)
 
-Everything self-hosted — MinIO on the LAN, plain HTTP, and tagged objects:
+Everything self-hosted - MinIO on the LAN, plain HTTP, and tagged objects:
 
 ```yaml
 plans:

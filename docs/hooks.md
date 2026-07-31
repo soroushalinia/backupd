@@ -25,6 +25,6 @@ Hooks run shell commands at points in the backup lifecycle:
 
 ## Typical uses
 
-- **Healthchecks.io / Uptime Kuma pings** — notify external monitors of success or failure
-- **Notifications** — `mail`, `ntfy`, Slack/Discord webhooks via `curl`
-- **Warm-up** — flush caches or rotate logs before the backup snapshot
+- **Healthchecks.io / Uptime Kuma pings** - notify external monitors of success or failure
+- **Notifications** - `mail`, `ntfy`, Slack/Discord webhooks via `curl`
+- **Warm-up** - flush caches or rotate logs before the backup snapshot

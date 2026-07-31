@@ -38,7 +38,7 @@ plans:
 | `tags`       | map    | no       | Key/value tags applied to snapshot objects |
 | `hooks`      | object | no       | Pre/post/on-failure hooks (see [Hooks](hooks.md)) |
 
-`rate-limit` throttles uploads and downloads for the plan — block transfers during backups and
+`rate-limit` throttles uploads and downloads for the plan - block transfers during backups and
 restores. Suffixes `K`, `M`, `G` (and `KiB`/`MiB`/`GiB`) are powers of 1024; a bare integer is
 bytes per second.
 
@@ -62,11 +62,11 @@ bytes per second.
 ## Environment interpolation
 
 Any `${VAR}` in the config is replaced with the value of the environment variable at load time.
-Variables are read from the process environment — ideal for keys, passphrases, and DSN passwords.
+Variables are read from the process environment - ideal for keys, passphrases, and DSN passwords.
 
 ## Validation
 
 Config is validated at load time: missing required fields, unknown source types, and missing
-destination settings fail fast with clear errors. Run `backupd check` for a deeper review — it
+destination settings fail fast with clear errors. Run `backupd check` for a deeper review - it
 also reports inaccessible file source paths, invalid cron schedules, and encryption setups
 without a passphrase.

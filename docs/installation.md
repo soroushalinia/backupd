@@ -30,4 +30,4 @@ backupd completion fish > ~/.config/fish/completions/backupd.fish  # fish
 ## Requirements
 
 - Go 1.24+ to build from source
-- No runtime dependencies — backupd is a single static binary
+- No runtime dependencies - backupd is a single static binary

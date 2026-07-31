@@ -5,8 +5,8 @@
 
 <hr />
 
-backupd lets you define backup plans in a single YAML file — sources, destination, encryption,
-retention, tags, and hooks — and handles the rest. Incremental by default, encrypted at rest, and
+backupd lets you define backup plans in a single YAML file - sources, destination, encryption,
+retention, tags, and hooks - and handles the rest. Incremental by default, encrypted at rest, and
 scheduled without extra tooling.
 
 !!! warning "Not production ready"
@@ -24,7 +24,7 @@ scheduled without extra tooling.
 
 - 📦 **Zero Runtime Dependencies**
 
-    A single static Go binary — no agent, no database, no interpreter.
+    A single static Go binary - no agent, no database, no interpreter.
 
 - 🔐 **Encrypted at Rest**
 
@@ -33,7 +33,7 @@ scheduled without extra tooling.
 
 - 🗂️ **S3-Compatible Storage**
 
-    AWS S3, MinIO, DigitalOcean Spaces, Backblaze B2 — anything with an S3 API.
+    AWS S3, MinIO, DigitalOcean Spaces, Backblaze B2 - anything with an S3 API.
 
 - 🧩 **Multi-Source**
 
@@ -72,8 +72,8 @@ scheduled without extra tooling.
 
 - **Servers and VPSes**: if you need reliable backups of `/etc`, web roots, application data, or
   databases on a schedule, backupd replaces ad-hoc `cron` + `tar` + `scp` pipelines.
-- **Databases**: if you need consistent logical dumps of PostgreSQL, MySQL, MongoDB, or SQLite —
-  including the database *and* its files — in one place.
+- **Databases**: if you need consistent logical dumps of PostgreSQL, MySQL, MongoDB, or SQLite -
+  including the database *and* its files - in one place.
 - **Container workloads**: if you run Docker volumes or Kubernetes PVCs and want their contents in
   the same backup stream as everything else.
 - **Offsite storage**: if you want backups in S3-compatible object storage (MinIO at home,
@@ -120,7 +120,7 @@ backupd restore server <id> --target /tmp/restore   # restore any snapshot
 
 ## Next Steps
 
-- [Installation](installation.md) — get the binary
-- [Quick Start](quickstart.md) — your first backup in five minutes
-- [Configuration](configuration.md) — full config reference
-- [Examples](examples.md) — real-world setups for servers, databases, and containers
+- [Installation](installation.md) - get the binary
+- [Quick Start](quickstart.md) - your first backup in five minutes
+- [Configuration](configuration.md) - full config reference
+- [Examples](examples.md) - real-world setups for servers, databases, and containers

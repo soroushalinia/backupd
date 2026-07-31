@@ -2,21 +2,21 @@
 
 ## Is backupd production ready?
 
-No. It is under active development — config schema and snapshot formats may change without
+No. It is under active development - config schema and snapshot formats may change without
 notice. Use it for testing and feedback, not for critical backups yet.
 
 ## Do I need to keep the daemon running?
 
 Only if you want scheduled backups. Options:
 
-- `backupd daemon` — embedded scheduler, keeps running in the foreground
-- `backupd export-systemd` — generate systemd units and let the OS handle scheduling
-- Neither — run `backupd run <plan>` from your own `cron` if you prefer
+- `backupd daemon` - embedded scheduler, keeps running in the foreground
+- `backupd export-systemd` - generate systemd units and let the OS handle scheduling
+- Neither - run `backupd run <plan>` from your own `cron` if you prefer
 
 ## How does the delta algorithm work?
 
 Every file is hashed once on each run. Unchanged files (same hash as the previous snapshot's
-manifest) reuse their previous block references — zero uploads. Changed files are split into
+manifest) reuse their previous block references - zero uploads. Changed files are split into
 fixed-size 8 KiB blocks; each block is uploaded only if it does not already exist in the bucket.
 Blocks are content-addressed, so identical content anywhere in a plan shares one object, even
 when encrypted. See [How It Works](architecture.md#incremental-backups) and
@@ -31,21 +31,21 @@ once they are referenced by nothing. See [How It Works](architecture.md#failed-r
 
 ## How are symlinks and empty directories backed up?
 
-Symlinks are stored as their target path, never followed — broken links are fine, and a link can
+Symlinks are stored as their target path, never followed - broken links are fine, and a link can
 never pull content from outside the backup root. Empty directories and directory permissions are
 preserved. On restore, directories are created first, then files, then symlinks, so nothing is
 written through a restored symlink. See [Sources](sources.md#file).
 
 ## What do rate limits do?
 
-`rate-limit: 10M` on a plan throttles all transfers — uploads, restores, and verification — to
+`rate-limit: 10M` on a plan throttles all transfers - uploads, restores, and verification - to
 that many bytes per second (with a one-second burst). Useful for keeping backups from saturating
 a link. See [Configuration](configuration.md#plan).
 
 ## How do I test a config or a backup without consequences?
 
 `backupd check` validates the config and prints a per-plan summary with warnings; `backupd run
-<plan> --dry-run` runs the whole pipeline against a read-only storage — nothing is uploaded, no
+<plan> --dry-run` runs the whole pipeline against a read-only storage - nothing is uploaded, no
 hooks run, no snapshot is recorded. See the [CLI Reference](cli.md#check).
 
 ## What happens if I lose the encryption passphrase?
@@ -55,7 +55,7 @@ and the passphrase is never stored anywhere. Store it in a password manager.
 
 ## Can I restore to a different machine?
 
-Yes. Restore only needs network access to the bucket and the plan's passphrase — `backupd
+Yes. Restore only needs network access to the bucket and the plan's passphrase - `backupd
 restore` downloads the manifest and reconstructs the data locally. The config file is only used
 to locate the destination and read the passphrase.
 
@@ -66,7 +66,7 @@ Scaleway, and more. See [Configuration](configuration.md#destination).
 
 ## Why are database dumps stored separately from files?
 
-Each source is backed up independently — database dumps as `.sql`/`.dump` streams, files as delta
+Each source is backed up independently - database dumps as `.sql`/`.dump` streams, files as delta
 block objects, Docker/Kubernetes as `.tar`. The snapshot manifest records all of them, so one
 snapshot restores every source of the plan.
 
@@ -82,7 +82,7 @@ structured keys that are inspectable in the bucket.
 File sources upload only changed blocks: unchanged files are skipped wholesale by comparing their
 hash to the previous manifest (incremental), and even changed blocks are uploaded only when the
 object isn't already in the bucket (dedup). A backup of a large, unchanged dataset uploads just
-the manifest. Database, Docker, and Kubernetes sources are dumped fresh each run — that's how
+the manifest. Database, Docker, and Kubernetes sources are dumped fresh each run - that's how
 consistency is guaranteed for those source types.
 
 ## How do I see the last backup status?
