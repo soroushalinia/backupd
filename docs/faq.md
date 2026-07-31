@@ -26,15 +26,19 @@ when encrypted. See [How It Works](architecture.md#incremental-backups) and
 
 The run aborts, the on-failure hook runs, and no snapshot is recorded in `history`. The source
 archives and manifest already uploaded for that run are deleted again; deduplication blocks are
-left in place (they may be shared with good snapshots) and are cleaned up by the retention pruner
-once they are referenced by nothing. See [How It Works](architecture.md#failed-runs).
+left in place (they may be shared with good snapshots) and blocks orphaned by the failed run are
+garbage-collected immediately. A capture tool that exits nonzero (for example a failing database
+dump) also fails the run - a partial dump is never stored as a snapshot. See
+[How It Works](architecture.md#failed-runs).
 
 ## How are symlinks and empty directories backed up?
 
 Symlinks are stored as their target path, never followed - broken links are fine, and a link can
 never pull content from outside the backup root. Empty directories and directory permissions are
-preserved. On restore, directories are created first, then files, then symlinks, so nothing is
-written through a restored symlink. See [Sources](sources.md#file).
+preserved. On restore, directories are created first, then files, then symlinks, then hardlinks,
+so nothing is written through a restored symlink. Hardlinks are detected during the walk and
+stored once - the first path for an inode carries the blocks, the rest record a link reference -
+and restored as real links. See [Sources](sources.md#file).
 
 ## What do rate limits do?
 
@@ -46,7 +50,9 @@ a link. See [Configuration](configuration.md#plan).
 
 `backupd check` validates the config and prints a per-plan summary with warnings; `backupd run
 <plan> --dry-run` runs the whole pipeline against a read-only storage - nothing is uploaded, no
-hooks run, no snapshot is recorded. See the [CLI Reference](cli.md#check).
+hooks run, no snapshot is recorded. `backupd prune <plan> --dry-run` and `backupd restore <plan>
+<snapshot-id> --dry-run` do the same for deleting old snapshots and writing files, respectively.
+See the [CLI Reference](cli.md#check).
 
 ## What happens if I lose the encryption passphrase?
 

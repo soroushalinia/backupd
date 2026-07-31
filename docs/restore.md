@@ -19,13 +19,16 @@ backupd restore server <snapshot-id> -t /tmp/restore   # shorthand
 
 - File sources are reconstructed block-by-block from the delta manifest - you get the exact files
   (and permissions) as of that snapshot. Directories are recreated first, then files, then
-  symlinks, and empty directories are preserved.
+  symlinks, then hardlinks, and empty directories are preserved.
 - Symlinks are restored as their stored target and are never followed, so nothing is written
-  through them during a restore.
+  through them during a restore. Hardlinks are recreated as real links - the link relationship
+  survives a restore.
 - Database, Docker, and Kubernetes sources are written as their stored archive (`.sql`, `.tar`)
   into the target directory, named after the source object.
 - Restores stream: files are written block-by-block and encrypted archives are decrypted
   chunk-by-chunk, so memory use stays flat regardless of file or dump size.
+- `restore --dry-run` reads the manifest and reports each source (file count, bytes, blocks) and
+  whether archive objects are present, without writing anything.
 
 !!! tip "Restore is read-only on the bucket"
     Restoring never modifies or deletes snapshot objects - it only downloads.

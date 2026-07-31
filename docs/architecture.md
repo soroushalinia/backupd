@@ -65,7 +65,8 @@ else:
 ```
 
 Each file entry records its path, size, permissions, and the ids of the blocks that make it up.
-Directories and symlinks are recorded as entries too (`link_target` holds the symlink target).
+Directories, symlinks, and hardlinks are recorded as entries too (`link_target` holds a symlink
+target; `hardlink_of` points at the canonical entry that carries the blocks).
 
 !!! note "Manifest metadata is plaintext"
     File *contents* are always encrypted in encrypted plans, but the manifest itself is stored in
@@ -96,7 +97,9 @@ written snapshot never appears in `history` (state is recorded only on success).
 
 Deduplication blocks are **not** deleted on failure - they are content-addressed, so they may be
 referenced by other snapshots, and deleting them could corrupt good snapshots. Blocks orphaned by
-failed runs are cleaned up by the retention pruner.
+the failed run are garbage-collected as soon as the run ends (and again during retention
+pruning). A capture tool that exits nonzero (a failing database dump, a broken docker volume)
+also fails the run: the partial stream is never stored as a snapshot.
 
 ## Retention cleanup
 
@@ -104,10 +107,12 @@ The retention pruner (keep-last / daily / weekly / monthly) deletes expired snap
 
 1. The snapshot's manifest and source archives.
 2. Any block objects that are no longer referenced by *any* remaining manifest - this is what
-   eventually reclaims storage from failed runs, and from files that were deleted or changed in
-   the source.
+   eventually reclaims storage from files that were deleted or changed in the source.
 
-Blocks shared with surviving snapshots are kept.
+Blocks shared with surviving snapshots are kept. Garbage collection also runs after failed runs
+and, on plans without a retention policy, after every successful run. `backupd prune <plan>`
+applies the policy on demand, and `--dry-run` reports what would be deleted without deleting
+anything.
 
 ## Encryption at rest
 

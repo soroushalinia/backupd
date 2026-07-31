@@ -8,8 +8,10 @@ retention:
   keep-monthly: 12
 ```
 
-Snapshots are pruned after every successful backup according to the policy. All four policies can
-be combined; a snapshot is kept if any policy keeps it.
+Snapshots are pruned after every successful backup according to the policy, and
+`backupd prune <plan>` applies the policy on demand (`--dry-run` reports what would be deleted
+without deleting anything). All four policies can be combined; a snapshot is kept if any policy
+keeps it.
 
 ## Policies
 
@@ -27,8 +29,10 @@ Example - with the config above, backupd keeps:
 - plus the newest snapshot of each of the last 4 weeks,
 - plus the newest snapshot of each of the last 12 months.
 
-Older snapshots and their objects are removed from the bucket. Empty parent prefixes are cleaned
-up as well.
+Older snapshots and their objects are removed from the bucket. Deduplication blocks that are no
+longer referenced by any remaining snapshot are garbage-collected in the same pass; plans without
+a retention policy still get orphaned blocks collected after every successful run and after
+failed runs.
 
 !!! note
     `keep-last` is the only policy that guarantees N snapshots exist. The calendar-based policies
