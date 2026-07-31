@@ -8,14 +8,14 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: amber
+      primary: yellow
       accent: yellow
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: amber
+      primary: yellow
       accent: yellow
       toggle:
         icon: material/brightness-4
@@ -38,6 +38,7 @@ theme:
 
 markdown_extensions:
   - admonition
+  - md_in_html
   - toc:
       permalink: true
   - pymdownx.superfences:
@@ -52,6 +53,9 @@ markdown_extensions:
 
 extra_javascript:
   - https://unpkg.com/mermaid@11/dist/mermaid.min.js
+
+extra_css:
+  - stylesheets/extra.css
 
 nav:
   - Home: index.md
