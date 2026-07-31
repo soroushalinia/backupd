@@ -11,7 +11,7 @@ With a passphrase set, **all content** is encrypted before it reaches the bucket
 
 - **Dedup blocks** (file contents) - each 8 KiB block individually, AES-256-GCM, convergent
   encryption (see below).
-- **Source archives** (database dumps, Docker volumes, Kubernetes PVCs) - streamed as 1 MiB
+- **Source archives** (Docker volumes, Kubernetes PVCs) - streamed as 1 MiB
   AES-256-GCM frames and stored with a `.enc` suffix.
 
 The snapshot manifest (paths, sizes, hashes) stays plaintext so incremental runs, `history`, and
@@ -29,6 +29,8 @@ The snapshot manifest (paths, sizes, hashes) stays plaintext so incremental runs
   on encrypted data while a different master key still yields unreadable ciphertext.
 - **Archives** are encrypted with a random nonce per stream in 1 MiB AEAD frames, which keeps
   memory use flat no matter how large the dump is.
+- **Database dumps** are stored as blocks like files, so they are encrypted with the same
+  convergent block scheme - an unchanged database uploads nothing even on an encrypted plan.
 - On restore and `verify`, every block is decrypted and its plaintext hash re-checked, and every
   archive stream is decrypted end-to-end - tampering or partial loss is detected, not silently
   restored.

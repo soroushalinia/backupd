@@ -57,6 +57,17 @@ func (e *Engine) Restore(ctx context.Context, plan config.Plan, snapshotID strin
 				return err
 			}
 
+		case "database":
+			// Newer snapshots store dumps as blocks; older ones as
+			// a single encrypted archive object.
+			if len(src.Blocks) > 0 {
+				if err := e.restoreDumpBlocks(ctx, dest, plan.Name, src.Key, target, src.Blocks, encKey, limiter); err != nil {
+					return err
+				}
+				continue
+			}
+			fallthrough
+
 		default:
 			if src.Key == "" {
 				return fmt.Errorf("missing source key for type %q", src.Type)

@@ -66,7 +66,7 @@ Scaleway, and more. See [Configuration](configuration.md#destination).
 
 ## Why are database dumps stored separately from files?
 
-Each source is backed up independently - database dumps as `.sql`/`.dump` streams, files as delta
+Each source is backed up independently - database dumps as block streams, files as delta
 block objects, Docker/Kubernetes as `.tar`. The snapshot manifest records all of them, so one
 snapshot restores every source of the plan.
 
@@ -81,8 +81,9 @@ structured keys that are inspectable in the bucket.
 
 File sources upload only changed blocks: unchanged files are skipped wholesale by comparing their
 hash to the previous manifest (incremental), and even changed blocks are uploaded only when the
-object isn't already in the bucket (dedup). A backup of a large, unchanged dataset uploads just
-the manifest. Database, Docker, and Kubernetes sources are dumped fresh each run - that's how
+object isn't already in the bucket (dedup). Database dumps go through the same block pipeline, so
+an unchanged database uploads only the manifest. A backup of a large, unchanged dataset uploads
+just the manifest. Docker and Kubernetes sources are dumped fresh each run - that's how
 consistency is guaranteed for those source types.
 
 ## How do I see the last backup status?

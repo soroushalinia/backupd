@@ -41,7 +41,9 @@ files (fifos, sockets, devices) are skipped with a warning.
 | `dsn`       | string | yes      | Connection string for the dump tool |
 | `dump-tool` | string | no       | Override the dump binary (default: `pg_dump`, `mysqldump`, `mongodump`, `sqlite3`) |
 
-The dump is piped to storage as a `.sql` (or `.dump`) object - no intermediate file on disk.
+The dump is streamed straight into the block pipeline (see [Delta algorithm](#delta-algorithm)):
+an unchanged database uploads nothing, and a changed one uploads only the blocks that differ -
+even on encrypted plans. No intermediate file is written to disk.
 
 ## Docker
 
@@ -75,13 +77,14 @@ The PVC is copied via `kubectl exec` and stored as a `.tar` object.
 
 ## Delta algorithm
 
-File sources use an rsync-style delta algorithm:
+File sources and database dumps use an rsync-style delta algorithm:
 
 1. The source is walked; directories and symlinks are stored as manifest entries, and each regular
-   file is split into fixed-size blocks.
-2. Each file is hashed once and compared against the previous snapshot's manifest.
-3. Unchanged files reuse their previous block references; new or changed blocks are uploaded only
-   when the object does not already exist in storage.
-4. A new manifest records the file → block mapping, which restores reconstruct files from.
+   file (or database dump stream) is split into fixed-size blocks.
+2. Each file is hashed once and compared against the previous snapshot's manifest; database dumps
+   reuse the previous dump's block references.
+3. Unchanged files and unchanged dump blocks reuse their previous block references; new or changed
+   blocks are uploaded only when the object does not already exist in storage.
+4. A new manifest records the source → block mapping, which restores reconstruct files from.
 
 This keeps repeated backups cheap for large, mostly-unchanged datasets.

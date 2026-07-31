@@ -49,9 +49,9 @@ type fileManifest struct {
 	Files []fileBlockRef `json:"files"`
 }
 
-// previousManifest loads the most recent snapshot manifest for a plan, used to
-// skip unchanged files during the next backup.
-func (e *Engine) previousManifest(ctx context.Context, dest storage.Storage, planName string) (*fileManifest, error) {
+// previousSources loads the most recent snapshot manifest for a plan,
+// returning its source entries, or nil when no snapshot exists yet.
+func (e *Engine) previousSources(ctx context.Context, dest storage.Storage, planName string) ([]sourceEntry, error) {
 	snapshots, err := e.store.ListSnapshots(planName)
 	if err != nil {
 		return nil, err
@@ -76,28 +76,40 @@ func (e *Engine) previousManifest(ctx context.Context, dest storage.Storage, pla
 	if err := json.NewDecoder(r).Decode(&manifest); err != nil {
 		return nil, err
 	}
+	return manifest.Sources, nil
+}
 
-	merged := &fileManifest{}
-	for _, src := range manifest.Sources {
-		if src.Type == "file" {
-			merged.Files = append(merged.Files, src.Files...)
+// previousDumpBlocks returns the block references of database sources from
+// the most recent snapshot manifest, used to skip already-uploaded blocks.
+func (e *Engine) previousDumpBlocks(ctx context.Context, dest storage.Storage, planName string) ([]blockRef, error) {
+	sources, err := e.previousSources(ctx, dest, planName)
+	if err != nil || sources == nil {
+		return nil, err
+	}
+	var blocks []blockRef
+	for _, src := range sources {
+		if src.Type == "database" {
+			blocks = append(blocks, src.Blocks...)
 		}
 	}
-	return merged, nil
+	return blocks, nil
 }
 
 func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string, encKey []byte, limiter *ratelimit.Limiter) (int64, *fileManifest, error) {
 	var total int64
 	manifest := &fileManifest{}
 
-	prev, err := e.previousManifest(ctx, dest, planName)
+	prev, err := e.previousSources(ctx, dest, planName)
 	if err != nil {
 		return 0, nil, fmt.Errorf("loading previous manifest: %w", err)
 	}
 	prevFiles := make(map[string]*fileBlockRef)
-	if prev != nil {
-		for i := range prev.Files {
-			prevFiles[prev.Files[i].Path] = &prev.Files[i]
+	for _, src := range prev {
+		if src.Type != "file" {
+			continue
+		}
+		for i := range src.Files {
+			prevFiles[src.Files[i].Path] = &src.Files[i]
 		}
 	}
 
@@ -280,6 +292,132 @@ func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path
 	return nil
 }
 
+// backupDumpBlocks streams a source dump (database) in fixed-size blocks,
+// content-addressing and uploading only blocks not already in storage. The
+// blocks share the plan's block namespace with file sources, so an
+// unchanged database uploads nothing and a changed one uploads only the
+// blocks that differ.
+func (e *Engine) backupDumpBlocks(ctx context.Context, dest storage.Storage, planName string, r io.Reader, prevBlocks []blockRef, encKey []byte, limiter *ratelimit.Limiter) (int64, []blockRef, error) {
+	knownBlocks := make(map[string]bool)
+	for _, b := range prevBlocks {
+		knownBlocks[b.ID] = true
+	}
+
+	var total int64
+	var refs []blockRef
+	blockSize := delta.DefaultBlockSize
+	buf := make([]byte, blockSize)
+	for {
+		n, err := io.ReadFull(r, buf)
+		if n == 0 && err == io.EOF {
+			break
+		}
+		if n == 0 && err != nil {
+			return 0, nil, fmt.Errorf("reading dump: %w", err)
+		}
+
+		block := buf[:n]
+		plainHash := sha256.Sum256(block)
+		blockID := hex.EncodeToString(plainHash[:])
+		stored := block
+
+		if encKey != nil {
+			enc, err := crypto.EncryptBlock(encKey, block)
+			if err != nil {
+				return 0, nil, fmt.Errorf("encrypting dump block: %w", err)
+			}
+			stored = enc
+			idHash := sha256.Sum256(enc)
+			blockID = hex.EncodeToString(idHash[:])
+		}
+
+		refs = append(refs, blockRef{ID: blockID, Hash: hex.EncodeToString(plainHash[:])})
+
+		if !knownBlocks[blockID] {
+			blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
+			exists, err := dest.Exists(ctx, blockKey)
+			if err != nil {
+				return 0, nil, fmt.Errorf("checking block %s: %w", blockID, err)
+			}
+			if !exists {
+				if err := dest.Upload(ctx, blockKey, ratelimit.NewReader(ctx, bytes.NewReader(stored), limiter)); err != nil {
+					return 0, nil, fmt.Errorf("uploading block: %w", err)
+				}
+				total += int64(len(stored))
+			}
+		}
+
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return 0, nil, fmt.Errorf("reading dump: %w", err)
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+	return total, refs, nil
+}
+
+// downloadBlock fetches a block, decrypting and hash-verifying it when the
+// plan is encrypted.
+func downloadBlock(ctx context.Context, dest storage.Storage, planName string, block blockRef, encKey []byte, limiter *ratelimit.Limiter) ([]byte, error) {
+	blockKey := fmt.Sprintf("%s/blocks/%s", planName, block.ID)
+	r, err := dest.Download(ctx, blockKey)
+	if err != nil {
+		return nil, fmt.Errorf("downloading block %s: %w", block.ID, err)
+	}
+	if r == nil {
+		return nil, fmt.Errorf("block %s not found", block.ID)
+	}
+	r = ratelimit.WrapReadCloser(ctx, r, limiter)
+	blockData, err := io.ReadAll(r)
+	r.Close()
+	if err != nil {
+		return nil, fmt.Errorf("reading block %s: %w", block.ID, err)
+	}
+
+	plain := blockData
+	if encKey != nil {
+		plainHash, err := hex.DecodeString(block.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("invalid block hash: %w", err)
+		}
+		plain, err = crypto.DecryptBlock(encKey, plainHash, blockData)
+		if err != nil {
+			return nil, fmt.Errorf("decrypting block %s: %w", block.ID, err)
+		}
+		computed := sha256.Sum256(plain)
+		if !bytes.Equal(computed[:], plainHash) {
+			return nil, fmt.Errorf("block %s: hash mismatch (corrupt)", block.ID)
+		}
+	}
+	return plain, nil
+}
+
+// restoreDumpBlocks reassembles a dump source from its block references,
+// writing the plaintext dump to target/<basename>.
+func (e *Engine) restoreDumpBlocks(ctx context.Context, dest storage.Storage, planName, srcKey, target string, blocks []blockRef, encKey []byte, limiter *ratelimit.Limiter) error {
+	if err := os.MkdirAll(target, 0755); err != nil {
+		return fmt.Errorf("creating target dir: %w", err)
+	}
+	out := filepath.Join(target, filepath.Base(srcKey))
+	f, err := os.Create(out)
+	if err != nil {
+		return err
+	}
+	for _, block := range blocks {
+		plain, err := downloadBlock(ctx, dest, planName, block, encKey, limiter)
+		if err != nil {
+			f.Close()
+			return err
+		}
+		if _, err := f.Write(plain); err != nil {
+			f.Close()
+			return err
+		}
+	}
+	return f.Close()
+}
+
 func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte, limiter *ratelimit.Limiter) error {
 	// Pass 1: recreate directories (including empty ones) with their modes.
 	for _, ref := range manifest.Files {
@@ -319,44 +457,11 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 		}
 
 		for _, block := range ref.Blocks {
-			blockKey := fmt.Sprintf("%s/blocks/%s", planName, block.ID)
-			r, err := dest.Download(ctx, blockKey)
-			if err != nil {
-				f.Close()
-				return fmt.Errorf("downloading block %s: %w", block.ID, err)
-			}
-			if r == nil {
-				f.Close()
-				return fmt.Errorf("block %s not found", block.ID)
-			}
-			r = ratelimit.WrapReadCloser(ctx, r, limiter)
-
-			blockData, err := io.ReadAll(r)
-			r.Close()
+			plain, err := downloadBlock(ctx, dest, planName, block, encKey, limiter)
 			if err != nil {
 				f.Close()
 				return err
 			}
-
-			plain := blockData
-			if encKey != nil {
-				plainHash, err := hex.DecodeString(block.Hash)
-				if err != nil {
-					f.Close()
-					return fmt.Errorf("invalid block hash: %w", err)
-				}
-				plain, err = crypto.DecryptBlock(encKey, plainHash, blockData)
-				if err != nil {
-					f.Close()
-					return fmt.Errorf("decrypting block %s: %w", block.ID, err)
-				}
-				computed := sha256.Sum256(plain)
-				if !bytes.Equal(computed[:], plainHash) {
-					f.Close()
-					return fmt.Errorf("block %s: hash mismatch (corrupt)", block.ID)
-				}
-			}
-
 			if _, err := f.Write(plain); err != nil {
 				f.Close()
 				return err

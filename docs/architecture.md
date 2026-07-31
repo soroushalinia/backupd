@@ -11,12 +11,10 @@ inspect with any S3 client:
 ```
 <plan>/
   blocks/
-    <block-id>                         # deduplicated file blocks (content-addressed)
+    <block-id>                         # deduplicated content-addressed blocks (files + database dumps)
   snapshots/
     <snapshot-uuid>/
-      manifest.json                    # snapshot metadata + file -> block mapping
-      sources/0.sql                    # database dump (unencrypted plan)
-      sources/0.sql.enc                # database dump (encrypted plan)
+      manifest.json                    # snapshot metadata + source -> block mapping
       sources/1.tar                    # docker volume / kubernetes PVC archive
 ```
 
@@ -24,15 +22,15 @@ The optional `destination.prefix` is prepended to every key.
 
 ## Deduplication blocks
 
-File sources are split into fixed-size blocks (8 KiB). Each block is stored as a separate object,
-addressed by its content hash:
+File sources and database dumps are split into fixed-size blocks (8 KiB). Each block is stored as
+a separate object, addressed by its content hash:
 
 - **Unencrypted plan**: the object id is the SHA-256 of the plaintext block.
 - **Encrypted plan**: the object id is the SHA-256 of the *ciphertext*.
 
 Because the id is derived from the stored bytes, identical content always maps to the same object
-no matter which file or plan-snapshot references it - deduplication works across files, plans,
-and time.
+no matter which file, database dump, plan, or snapshot references it - deduplication works across
+sources, plans, and time.
 
 ## The snapshot manifest
 
@@ -59,7 +57,8 @@ else:
         }
       ]
     },
-    { "type": "database", "key": "snapshots/7f1c…/sources/0.sql" }
+    { "type": "database", "key": "snapshots/7f1c…/sources/0.sql",
+      "blocks": [ { "id": "9c2e…", "hash": "b77a…" } ] }
   ],
   "encryption": { "algorithm": "AES-256-GCM", "kdf": "Argon2id", "salt": "…" }
 }
@@ -124,7 +123,7 @@ With `encryption.passphrase` set, every byte of content is encrypted before uplo
   deterministic, so the same plaintext always produces the same ciphertext: deduplication still
   works on encrypted data. Each block decrypts and re-verifies its plaintext hash on restore and
   verify.
-- **Archives (databases, docker, kubernetes)**: streams are encrypted chunk-by-chunk with
+- **Archives (docker, kubernetes)**: streams are encrypted chunk-by-chunk with
   **AES-256-GCM** in 1 MiB frames (`BACKUPD-STREAM-ENC-1` header, random nonce, per-chunk
   counter), stored with a `.enc` suffix. Large dumps are never held in memory.
 - **Object layout**: encrypted block objects are content-addressed by ciphertext hash, and the
@@ -138,10 +137,11 @@ Nothing stored is readable without the passphrase - see
 backupd streams instead of buffering:
 
 - File backup and restore move one 8 KiB block at a time; the whole file is never in memory (the
-  second read of a changed file typically hits the page cache).
-- Database/container dumps are spooled to a temporary file on disk so the upload size is known.
-  This enables S3 **multipart uploads** for large sources - a single PUT is limited to 5 GiB, and
-  the S3 client needs the size up front to switch to multipart.
+  second read of a changed file typically hits the page cache). Database dumps go through the same
+  block pipeline.
+- Container (docker, kubernetes) dumps are spooled to a temporary file on disk so the upload size
+  is known. This enables S3 **multipart uploads** for large sources - a single PUT is limited to
+  5 GiB, and the S3 client needs the size up front to switch to multipart.
 - Restores and `verify` stream block-by-block and chunk-by-chunk, decrypting as they go.
 
 ## Rate limiting

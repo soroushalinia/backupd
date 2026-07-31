@@ -83,6 +83,18 @@ func (e *Engine) verifyOne(ctx context.Context, plan config.Plan, snapshotID str
 			continue
 		}
 
+		// Database dumps stored as blocks (newer snapshots).
+		if src.Type == "database" && len(src.Blocks) > 0 {
+			label := src.Key
+			if label == "" {
+				label = "database dump"
+			}
+			if err := verifyFileBlocks(ctx, dest, plan.Name, label, src.Blocks, encKey, limiter); err != nil {
+				return err
+			}
+			continue
+		}
+
 		if src.Key == "" {
 			return fmt.Errorf("missing source key for type %q", src.Type)
 		}

@@ -132,6 +132,7 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 
 func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan config.Plan, snapID string, limiter *ratelimit.Limiter) (totalSize int64, err error) {
 	var fileManifests []*fileManifest
+	dbEntries := make(map[int]sourceEntry)
 
 	// On failure, remove the objects uploaded for this snapshot so a
 	// partially written snapshot does not linger in the bucket. Blocks are
@@ -187,6 +188,25 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 			}
 			srcKey = fmt.Sprintf("%s/snapshots/%s/sources/%d.sql", plan.Name, snapID, i)
 			r, srcErr = dbSrc.Capture(ctx)
+			if srcErr != nil {
+				return 0, fmt.Errorf("capturing source %d: %w", i, srcErr)
+			}
+
+			// Dumps go through the same content-addressed block
+			// pipeline as files: an unchanged database uploads nothing
+			// and a changed one uploads only the new blocks.
+			prevBlocks, err := e.previousDumpBlocks(ctx, dest, plan.Name)
+			if err != nil {
+				return 0, fmt.Errorf("loading previous dump blocks: %w", err)
+			}
+			size, refs, err := e.backupDumpBlocks(ctx, dest, plan.Name, r, prevBlocks, encKey, limiter)
+			r.Close()
+			if err != nil {
+				return 0, fmt.Errorf("backing up database dump: %w", err)
+			}
+			totalSize += size
+			dbEntries[i] = sourceEntry{Type: "database", Key: srcKey, Blocks: refs}
+			continue
 
 		case "docker":
 			srcKey = fmt.Sprintf("%s/snapshots/%s/sources/%d.tar", plan.Name, snapID, i)
@@ -236,10 +256,12 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		if srcCfg.Type == "file" {
 			continue
 		}
+		if entry, ok := dbEntries[i]; ok {
+			sourceEntries = append(sourceEntries, entry)
+			continue
+		}
 		var ext string
 		switch srcCfg.Type {
-		case "database":
-			ext = ".sql"
 		case "docker", "kubernetes":
 			ext = ".tar"
 		default:
@@ -440,9 +462,10 @@ func rateLimiter(plan config.Plan) (*ratelimit.Limiter, error) {
 }
 
 type sourceEntry struct {
-	Type  string         `json:"type"`
-	Key   string         `json:"key,omitempty"`
-	Files []fileBlockRef `json:"files,omitempty"`
+	Type   string         `json:"type"`
+	Key    string         `json:"key,omitempty"`
+	Blocks []blockRef     `json:"blocks,omitempty"`
+	Files  []fileBlockRef `json:"files,omitempty"`
 }
 
 // discardStorage wraps a Storage and discards all writes, leaving reads

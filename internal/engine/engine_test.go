@@ -359,6 +359,116 @@ func TestEngineRunIncrementalEncrypted(t *testing.T) {
 	}
 }
 
+func TestEngineDatabaseSourceIncremental(t *testing.T) {
+	if _, err := exec.LookPath("sqlite3"); err != nil {
+		t.Skip("sqlite3 not available")
+	}
+
+	dbPath := filepath.Join(t.TempDir(), "app.db")
+	if out, err := exec.Command("sqlite3", dbPath,
+		"CREATE TABLE users (id INTEGER PRIMARY KEY, name TEXT);",
+		"INSERT INTO users (name) VALUES ('alice');",
+	).CombinedOutput(); err != nil {
+		t.Fatalf("creating sqlite db: %v: %s", err, out)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "db-plan",
+		Sources: []config.Source{
+			{Type: "database", Adapter: "sqlite", DSN: dbPath, DumpTool: "sqlite3"},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+		Encryption: &config.Encryption{Passphrase: "correct horse battery staple"},
+	}
+
+	first, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// Dumps are stored as blocks, not as a single archive object.
+	for key := range st.data {
+		if strings.Contains(key, "sources/") {
+			t.Errorf("database dump stored as archive %q", key)
+		}
+	}
+
+	// An unchanged database uploads nothing.
+	second, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Size != 0 {
+		t.Errorf("expected zero upload for unchanged database, got %d", second.Size)
+	}
+
+	// Every snapshot verifies and restores to the current dump.
+	wantDump := sqliteDump(t, dbPath)
+	for _, id := range []string{first.SnapshotID, second.SnapshotID} {
+		if err := eng.Verify(context.Background(), plan, id, st); err != nil {
+			t.Errorf("verify snapshot %s: %v", id, err)
+		}
+		dst := t.TempDir()
+		if err := eng.Restore(context.Background(), plan, id, dst, st); err != nil {
+			t.Fatalf("restore snapshot %s: %v", id, err)
+		}
+		got, err := os.ReadFile(filepath.Join(dst, "0.sql"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, wantDump) {
+			t.Errorf("snapshot %s dump mismatch", id)
+		}
+	}
+
+	// A changed database uploads only new blocks; the new snapshot
+	// verifies and restores to the new dump.
+	if out, err := exec.Command("sqlite3", dbPath, "INSERT INTO users (name) VALUES ('bob');").CombinedOutput(); err != nil {
+		t.Fatalf("updating sqlite db: %v: %s", err, out)
+	}
+	third, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if third.Size == 0 {
+		t.Error("expected non-zero upload for changed database")
+	}
+	if err := eng.Verify(context.Background(), plan, third.SnapshotID, st); err != nil {
+		t.Errorf("verify snapshot 3: %v", err)
+	}
+	dst := t.TempDir()
+	if err := eng.Restore(context.Background(), plan, third.SnapshotID, dst, st); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dst, "0.sql"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, sqliteDump(t, dbPath)) {
+		t.Error("snapshot 3 dump mismatch")
+	}
+}
+
+func sqliteDump(t *testing.T, dbPath string) []byte {
+	t.Helper()
+	out, err := exec.Command("sqlite3", dbPath, ".dump").Output()
+	if err != nil {
+		t.Fatalf("dumping sqlite db: %v", err)
+	}
+	return out
+}
+
 func TestSafeJoin(t *testing.T) {
 	target := t.TempDir()
 
