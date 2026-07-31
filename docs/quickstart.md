@@ -21,9 +21,18 @@ plans:
       keep-last: 30
 ```
 
-Run a backup on demand:
+Validate the config — it prints a per-plan summary and flags problems like missing paths or bad
+schedules:
 
 ```shell
+backupd check
+```
+
+Run a backup on demand (add `--dry-run` first to see what it would upload without writing
+anything):
+
+```shell
+backupd run server --dry-run
 backupd run server
 ```
 

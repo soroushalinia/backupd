@@ -15,9 +15,38 @@ Only if you want scheduled backups. Options:
 
 ## How does the delta algorithm work?
 
-Each file is split into fixed-size blocks with SHA-256 hashes. The hash of every block is
-compared against the previous snapshot's manifest: unchanged blocks are skipped, and only new or
-changed blocks are uploaded. See [Sources](sources.md#delta-algorithm).
+Every file is hashed once on each run. Unchanged files (same hash as the previous snapshot's
+manifest) reuse their previous block references — zero uploads. Changed files are split into
+fixed-size 8 KiB blocks; each block is uploaded only if it does not already exist in the bucket.
+Blocks are content-addressed, so identical content anywhere in a plan shares one object, even
+when encrypted. See [How It Works](architecture.md#incremental-backups) and
+[Sources](sources.md#delta-algorithm).
+
+## What happens if a backup fails partway through?
+
+The run aborts, the on-failure hook runs, and no snapshot is recorded in `history`. The source
+archives and manifest already uploaded for that run are deleted again; deduplication blocks are
+left in place (they may be shared with good snapshots) and are cleaned up by the retention pruner
+once they are referenced by nothing. See [How It Works](architecture.md#failed-runs).
+
+## How are symlinks and empty directories backed up?
+
+Symlinks are stored as their target path, never followed — broken links are fine, and a link can
+never pull content from outside the backup root. Empty directories and directory permissions are
+preserved. On restore, directories are created first, then files, then symlinks, so nothing is
+written through a restored symlink. See [Sources](sources.md#file).
+
+## What do rate limits do?
+
+`rate-limit: 10M` on a plan throttles all transfers — uploads, restores, and verification — to
+that many bytes per second (with a one-second burst). Useful for keeping backups from saturating
+a link. See [Configuration](configuration.md#plan).
+
+## How do I test a config or a backup without consequences?
+
+`backupd check` validates the config and prints a per-plan summary with warnings; `backupd run
+<plan> --dry-run` runs the whole pipeline against a read-only storage — nothing is uploaded, no
+hooks run, no snapshot is recorded. See the [CLI Reference](cli.md#check).
 
 ## What happens if I lose the encryption passphrase?
 
@@ -50,8 +79,11 @@ structured keys that are inspectable in the bucket.
 
 ## Does backupd upload to the bucket on every run?
 
-File sources upload only changed blocks (incremental). Database, Docker, and Kubernetes sources
-are dumped fresh each run — that's how consistency is guaranteed for those source types.
+File sources upload only changed blocks: unchanged files are skipped wholesale by comparing their
+hash to the previous manifest (incremental), and even changed blocks are uploaded only when the
+object isn't already in the bucket (dedup). A backup of a large, unchanged dataset uploads just
+the manifest. Database, Docker, and Kubernetes sources are dumped fresh each run — that's how
+consistency is guaranteed for those source types.
 
 ## How do I see the last backup status?
 

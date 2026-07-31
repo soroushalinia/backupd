@@ -28,7 +28,8 @@ scheduled without extra tooling.
 
 - 🔐 **Encrypted at Rest**
 
-    AES-256-GCM encryption with Argon2id key derivation; nothing stored readable.
+    AES-256-GCM encryption with Argon2id key derivation; dedup blocks and archives are stored
+    unreadable without the passphrase.
 
 - 🗂️ **S3-Compatible Storage**
 
@@ -55,6 +56,15 @@ scheduled without extra tooling.
 - ✅ **Verifiable**
 
     Snapshot integrity verification and restore from any snapshot, anytime.
+
+- 🐢 **Rate Limiting**
+
+    Per-plan transfer limits keep backups from saturating slow or shared links.
+
+- 🧪 **Check & Dry-Run**
+
+    `backupd check` validates configs; `run --dry-run` shows exactly what would be uploaded
+    without writing a byte.
 
 </div>
 

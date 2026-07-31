@@ -68,6 +68,7 @@ nav:
       - Sources: sources.md
       - Restore & Verify: restore.md
       - Encryption: encryption.md
+      - How It Works: architecture.md
       - Retention: retention.md
       - Hooks: hooks.md
       - Scheduling: scheduling.md
