@@ -3,8 +3,8 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/soroushalinia/backupd/internal/config"
+	"github.com/spf13/cobra"
 )
 
 func newListCmd() *cobra.Command {

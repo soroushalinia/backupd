@@ -5,9 +5,9 @@ import (
 	"os"
 	"path/filepath"
 
-	"github.com/spf13/cobra"
 	"github.com/soroushalinia/backupd/internal/config"
 	"github.com/soroushalinia/backupd/internal/scheduler"
+	"github.com/spf13/cobra"
 )
 
 func newExportSystemdCmd() *cobra.Command {

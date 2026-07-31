@@ -4,8 +4,8 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/soroushalinia/backupd/internal/state"
+	"github.com/spf13/cobra"
 )
 
 func newHistoryCmd() *cobra.Command {

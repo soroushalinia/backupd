@@ -3,11 +3,11 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/soroushalinia/backupd/internal/config"
 	"github.com/soroushalinia/backupd/internal/engine"
 	"github.com/soroushalinia/backupd/internal/state"
 	"github.com/soroushalinia/backupd/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 func newRestoreCmd() *cobra.Command {

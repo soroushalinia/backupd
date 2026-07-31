@@ -6,10 +6,10 @@ import (
 	"os/signal"
 	"syscall"
 
-	"github.com/spf13/cobra"
 	"github.com/soroushalinia/backupd/internal/config"
 	"github.com/soroushalinia/backupd/internal/scheduler"
 	"github.com/soroushalinia/backupd/internal/state"
+	"github.com/spf13/cobra"
 )
 
 func newDaemonCmd() *cobra.Command {
