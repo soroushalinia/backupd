@@ -19,6 +19,12 @@ A plan can have any number of sources. Each source is one of four types: `file`,
 
 Files are backed up with the [delta algorithm](#delta-algorithm).
 
+Directories — including empty ones — are backed up with their permissions. Symlinks are stored as
+their target path instead of being followed, so broken links are backed up fine and a link can
+never pull content from outside the source root. During restore, directories are created first,
+then regular files, then symlinks, so nothing is ever written through a restored symlink. Special
+files (fifos, sockets, devices) are skipped with a warning.
+
 ## Database
 
 ```yaml
@@ -71,9 +77,11 @@ The PVC is copied via `kubectl exec` and stored as a `.tar` object.
 
 File sources use an rsync-style delta algorithm:
 
-1. The source is walked and each file is split into fixed-size blocks.
-2. Each block's SHA-256 hash is compared against the previous snapshot's manifest.
-3. Only new or changed blocks are uploaded; identical blocks are skipped.
+1. The source is walked; directories and symlinks are stored as manifest entries, and each regular
+   file is split into fixed-size blocks.
+2. Each file is hashed once and compared against the previous snapshot's manifest.
+3. Unchanged files reuse their previous block references; new or changed blocks are uploaded only
+   when the object does not already exist in storage.
 4. A new manifest records the file → block mapping, which restores reconstruct files from.
 
 This keeps repeated backups cheap for large, mostly-unchanged datasets.
