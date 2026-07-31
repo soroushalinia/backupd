@@ -472,6 +472,46 @@ func TestEngineDatabaseSourceIncremental(t *testing.T) {
 	}
 }
 
+// A dump tool that dies mid-stream must fail the run: the partial dump
+// would otherwise be stored as a truncated snapshot.
+func TestDatabaseDumpToolFailureFailsRun(t *testing.T) {
+	script := filepath.Join(t.TempDir(), "failing-dump.sh")
+	if err := os.WriteFile(script, []byte("#!/bin/sh\nprintf 'partial dump data'\nexit 3\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	dbFile := filepath.Join(t.TempDir(), "db.sqlite")
+	if err := os.WriteFile(dbFile, nil, 0o644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "fail-dump-plan",
+		Sources: []config.Source{
+			{Type: "database", Adapter: "sqlite", DSN: dbFile, DumpTool: script},
+		},
+		Destination: config.Destination{Type: "s3", Bucket: "b", Endpoint: "e"},
+	}
+
+	if _, err := eng.Run(context.Background(), plan, st); err == nil {
+		t.Fatal("expected run to fail when the dump tool exits nonzero")
+	}
+
+	for key := range st.data {
+		if strings.Contains(key, "manifest.json") {
+			t.Errorf("failed run wrote a manifest: %s", key)
+		}
+	}
+}
+
 func sqliteDump(t *testing.T, dbPath string) []byte {
 	t.Helper()
 	out, err := exec.Command("sqlite3", dbPath, ".dump").Output()

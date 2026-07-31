@@ -216,9 +216,15 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 				return 0, fmt.Errorf("loading previous dump blocks: %w", err)
 			}
 			size, refs, err := e.backupDumpBlocks(ctx, dest, plan.Name, r, prevBlocks, encKey, limiter)
-			r.Close()
 			if err != nil {
+				r.Close()
 				return 0, fmt.Errorf("backing up database dump: %w", err)
+			}
+			// The dump tool's exit status only surfaces when the stream
+			// is closed; a nonzero exit means the dump is truncated and
+			// must fail the run instead of being stored as-is.
+			if cerr := r.Close(); cerr != nil {
+				return 0, fmt.Errorf("backing up database dump: %w", cerr)
 			}
 			totalSize += size
 			dbEntries[i] = sourceEntry{Type: "database", Key: srcKey, Blocks: refs}
@@ -246,7 +252,9 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		}
 
 		size, err := uploadAndEncrypt(ctx, dest, srcKey, r, encKey, limiter)
-		r.Close()
+		if cerr := r.Close(); cerr != nil && err == nil {
+			err = cerr
+		}
 		if err != nil {
 			return 0, fmt.Errorf("uploading source %d: %w", i, err)
 		}

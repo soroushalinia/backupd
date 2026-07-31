@@ -39,7 +39,10 @@ func newStatusCmd() *cobra.Command {
 			}
 
 			for _, p := range plans {
-				last, _ := store.LastSnapshot(p.Name)
+				last, err := store.LastSnapshot(p.Name)
+				if err != nil {
+					return fmt.Errorf("reading last snapshot for %q: %w", p.Name, err)
+				}
 				if last != nil {
 					fmt.Printf("%-20s last=%s size=%d\n",
 						p.Name, last.Timestamp.Format(time.RFC3339), last.Size)
