@@ -11,6 +11,7 @@ import (
 
 	"github.com/soroushalinia/backupd/internal/config"
 	"github.com/soroushalinia/backupd/internal/crypto"
+	"github.com/soroushalinia/backupd/internal/ratelimit"
 	"github.com/soroushalinia/backupd/internal/storage"
 )
 
@@ -67,10 +68,15 @@ func (e *Engine) verifyOne(ctx context.Context, plan config.Plan, snapshotID str
 		}
 	}
 
+	limiter, err := rateLimiter(plan)
+	if err != nil {
+		return err
+	}
+
 	for _, src := range manifest.Sources {
 		if src.Type == "file" {
 			for _, f := range src.Files {
-				if err := verifyFileBlocks(ctx, dest, plan.Name, f.Path, f.Blocks, encKey); err != nil {
+				if err := verifyFileBlocks(ctx, dest, plan.Name, f.Path, f.Blocks, encKey, limiter); err != nil {
 					return err
 				}
 			}
@@ -80,7 +86,7 @@ func (e *Engine) verifyOne(ctx context.Context, plan config.Plan, snapshotID str
 		if src.Key == "" {
 			return fmt.Errorf("missing source key for type %q", src.Type)
 		}
-		if err := verifySource(ctx, dest, src.Key, encKey); err != nil {
+		if err := verifySource(ctx, dest, src.Key, encKey, limiter); err != nil {
 			return err
 		}
 	}
@@ -88,7 +94,7 @@ func (e *Engine) verifyOne(ctx context.Context, plan config.Plan, snapshotID str
 	return nil
 }
 
-func verifySource(ctx context.Context, dest storage.Storage, srcKey string, encKey []byte) error {
+func verifySource(ctx context.Context, dest storage.Storage, srcKey string, encKey []byte, limiter *ratelimit.Limiter) error {
 	key := srcKey
 	if encKey != nil {
 		key += ".enc"
@@ -102,6 +108,7 @@ func verifySource(ctx context.Context, dest storage.Storage, srcKey string, encK
 		return fmt.Errorf("source %s not found", key)
 	}
 	defer sr.Close()
+	sr = ratelimit.WrapReadCloser(ctx, sr, limiter)
 
 	if encKey != nil {
 		if err := crypto.StreamDecrypt(encKey, sr, io.Discard); err != nil {
@@ -114,7 +121,7 @@ func verifySource(ctx context.Context, dest storage.Storage, srcKey string, encK
 	return nil
 }
 
-func verifyFileBlocks(ctx context.Context, dest storage.Storage, planName, path string, blocks []blockRef, encKey []byte) error {
+func verifyFileBlocks(ctx context.Context, dest storage.Storage, planName, path string, blocks []blockRef, encKey []byte, limiter *ratelimit.Limiter) error {
 	hash := sha256.New()
 	for _, block := range blocks {
 		blockKey := fmt.Sprintf("%s/blocks/%s", planName, block.ID)
@@ -125,6 +132,7 @@ func verifyFileBlocks(ctx context.Context, dest storage.Storage, planName, path 
 		if br == nil {
 			return fmt.Errorf("block %s not found for %s", block.ID, path)
 		}
+		br = ratelimit.WrapReadCloser(ctx, br, limiter)
 		blockData, err := io.ReadAll(br)
 		br.Close()
 		if err != nil {

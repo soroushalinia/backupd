@@ -306,7 +306,7 @@ func TestUploadAndRestoreSourceRoundTrip(t *testing.T) {
 	content := bytes.Repeat([]byte("dump-data-"), 100000)
 	encKey := []byte("0123456789abcdef0123456789abcdef")
 
-	size, err := uploadAndEncrypt(ctx, st, "plan/snap/sources/0.sql", bytes.NewReader(content), encKey)
+	size, err := uploadAndEncrypt(ctx, st, "plan/snap/sources/0.sql", bytes.NewReader(content), encKey, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -324,7 +324,7 @@ func TestUploadAndRestoreSourceRoundTrip(t *testing.T) {
 
 	eng := New(nil)
 	dst := t.TempDir()
-	if err := eng.restoreSource(ctx, st, "plan/snap/sources/0.sql", dst, encKey); err != nil {
+	if err := eng.restoreSource(ctx, st, "plan/snap/sources/0.sql", dst, encKey, nil); err != nil {
 		t.Fatal(err)
 	}
 	got, err := os.ReadFile(filepath.Join(dst, "0.sql"))

@@ -16,6 +16,7 @@ import (
 	"github.com/google/uuid"
 	"github.com/soroushalinia/backupd/internal/crypto"
 	"github.com/soroushalinia/backupd/internal/delta"
+	"github.com/soroushalinia/backupd/internal/ratelimit"
 	"github.com/soroushalinia/backupd/internal/storage"
 )
 
@@ -85,7 +86,7 @@ func (e *Engine) previousManifest(ctx context.Context, dest storage.Storage, pla
 	return merged, nil
 }
 
-func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string, encKey []byte) (int64, *fileManifest, error) {
+func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string, encKey []byte, limiter *ratelimit.Limiter) (int64, *fileManifest, error) {
 	var total int64
 	manifest := &fileManifest{}
 
@@ -185,7 +186,7 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 
 		// Pass 2: stream again, processing each block (hash, encrypt,
 		// upload if new). The second read typically hits the page cache.
-		err = processFileBlocks(ctx, dest, planName, path, &ref, knownBlocks, encKey, &total)
+		err = processFileBlocks(ctx, dest, planName, path, &ref, knownBlocks, encKey, limiter, &total)
 		if err != nil {
 			return err
 		}
@@ -220,7 +221,7 @@ func hashFile(path string) ([]byte, error) {
 
 // processFileBlocks streams a file in fixed-size blocks, encrypting each
 // block and uploading it only when it does not exist in storage yet.
-func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path string, ref *fileBlockRef, knownBlocks map[string]bool, encKey []byte, total *int64) error {
+func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path string, ref *fileBlockRef, knownBlocks map[string]bool, encKey []byte, limiter *ratelimit.Limiter, total *int64) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", path, err)
@@ -262,7 +263,7 @@ func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path
 				return fmt.Errorf("checking block %s: %w", blockID, err)
 			}
 			if !exists {
-				if err := dest.Upload(ctx, blockKey, bytes.NewReader(stored)); err != nil {
+				if err := dest.Upload(ctx, blockKey, ratelimit.NewReader(ctx, bytes.NewReader(stored), limiter)); err != nil {
 					return fmt.Errorf("uploading block: %w", err)
 				}
 				*total += int64(len(stored))
@@ -279,7 +280,7 @@ func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path
 	return nil
 }
 
-func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte) error {
+func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte, limiter *ratelimit.Limiter) error {
 	// Pass 1: recreate directories (including empty ones) with their modes.
 	for _, ref := range manifest.Files {
 		if ref.Mode&os.ModeDir == 0 {
@@ -328,6 +329,7 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 				f.Close()
 				return fmt.Errorf("block %s not found", block.ID)
 			}
+			r = ratelimit.WrapReadCloser(ctx, r, limiter)
 
 			blockData, err := io.ReadAll(r)
 			r.Close()

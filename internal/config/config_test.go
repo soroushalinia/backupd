@@ -72,6 +72,26 @@ func TestValidateNoPlans(t *testing.T) {
 	}
 }
 
+func TestValidateRateLimit(t *testing.T) {
+	base := Plan{
+		Name:        "p",
+		Sources:     []Source{{Type: "file", Path: "/tmp"}},
+		Destination: Destination{Type: "s3", Bucket: "b", Endpoint: "e"},
+	}
+
+	good := base
+	good.RateLimit = "10M"
+	if err := good.Validate(); err != nil {
+		t.Errorf("valid rate-limit rejected: %v", err)
+	}
+
+	bad := base
+	bad.RateLimit = "fast"
+	if err := bad.Validate(); err == nil {
+		t.Error("invalid rate-limit accepted")
+	}
+}
+
 func TestLoadWithEnvVar(t *testing.T) {
 	os.Setenv("TEST_BACKUP_BUCKET", "env-bucket")
 	defer os.Unsetenv("TEST_BACKUP_BUCKET")

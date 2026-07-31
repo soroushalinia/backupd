@@ -9,6 +9,7 @@ type Config struct {
 type Plan struct {
 	Name        string            `mapstructure:"name" yaml:"name"`
 	Schedule    string            `mapstructure:"schedule" yaml:"schedule"`
+	RateLimit   string            `mapstructure:"rate-limit" yaml:"rate-limit"`
 	Sources     []Source          `mapstructure:"sources" yaml:"sources"`
 	Destination Destination       `mapstructure:"destination" yaml:"destination"`
 	Encryption  *Encryption       `mapstructure:"encryption" yaml:"encryption"`

@@ -30,12 +30,17 @@ plans:
 |--------------|--------|----------|------------------------------------------|
 | `name`       | string | yes      | Unique plan name                         |
 | `schedule`   | string | no       | Cron expression (e.g. `0 3 * * *`)       |
+| `rate-limit` | string | no       | Max transfer rate in bytes/second (e.g. `10M`, `500K`); `0` = unlimited |
 | `sources`    | list   | yes      | One or more sources (see [Sources](sources.md)) |
 | `destination`| object | yes      | Storage destination (see below)          |
 | `encryption` | object | no       | Encryption settings (see [Encryption](encryption.md)) |
 | `retention`  | object | no       | Retention policy (see [Retention](retention.md)) |
 | `tags`       | map    | no       | Key/value tags applied to snapshot objects |
 | `hooks`      | object | no       | Pre/post/on-failure hooks (see [Hooks](hooks.md)) |
+
+`rate-limit` throttles uploads and downloads for the plan — block transfers during backups and
+restores. Suffixes `K`, `M`, `G` (and `KiB`/`MiB`/`GiB`) are powers of 1024; a bare integer is
+bytes per second.
 
 ## Destination
 

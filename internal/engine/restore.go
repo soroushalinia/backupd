@@ -10,6 +10,7 @@ import (
 
 	"github.com/soroushalinia/backupd/internal/config"
 	"github.com/soroushalinia/backupd/internal/crypto"
+	"github.com/soroushalinia/backupd/internal/ratelimit"
 	"github.com/soroushalinia/backupd/internal/storage"
 )
 
@@ -43,11 +44,16 @@ func (e *Engine) Restore(ctx context.Context, plan config.Plan, snapshotID strin
 		}
 	}
 
+	limiter, err := rateLimiter(plan)
+	if err != nil {
+		return err
+	}
+
 	for _, src := range manifest.Sources {
 		switch src.Type {
 		case "file":
 			fm := &fileManifest{Files: src.Files}
-			if err := e.restoreFilesWithDelta(ctx, dest, plan.Name, target, fm, encKey); err != nil {
+			if err := e.restoreFilesWithDelta(ctx, dest, plan.Name, target, fm, encKey, limiter); err != nil {
 				return err
 			}
 
@@ -55,7 +61,7 @@ func (e *Engine) Restore(ctx context.Context, plan config.Plan, snapshotID strin
 			if src.Key == "" {
 				return fmt.Errorf("missing source key for type %q", src.Type)
 			}
-			if err := e.restoreSource(ctx, dest, src.Key, target, encKey); err != nil {
+			if err := e.restoreSource(ctx, dest, src.Key, target, encKey, limiter); err != nil {
 				return err
 			}
 		}
@@ -64,7 +70,7 @@ func (e *Engine) Restore(ctx context.Context, plan config.Plan, snapshotID strin
 	return nil
 }
 
-func (e *Engine) restoreSource(ctx context.Context, dest storage.Storage, srcKey, target string, encKey []byte) error {
+func (e *Engine) restoreSource(ctx context.Context, dest storage.Storage, srcKey, target string, encKey []byte, limiter *ratelimit.Limiter) error {
 	key := srcKey
 	if encKey != nil {
 		key += ".enc"
@@ -78,6 +84,7 @@ func (e *Engine) restoreSource(ctx context.Context, dest storage.Storage, srcKey
 		return fmt.Errorf("source %q not found", key)
 	}
 	defer r.Close()
+	r = ratelimit.WrapReadCloser(ctx, r, limiter)
 
 	if err := os.MkdirAll(target, 0755); err != nil {
 		return fmt.Errorf("creating target dir: %w", err)

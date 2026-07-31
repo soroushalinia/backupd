@@ -14,6 +14,7 @@ import (
 	"github.com/soroushalinia/backupd/internal/crypto"
 	"github.com/soroushalinia/backupd/internal/hook"
 	"github.com/soroushalinia/backupd/internal/progress"
+	"github.com/soroushalinia/backupd/internal/ratelimit"
 	"github.com/soroushalinia/backupd/internal/retention"
 	"github.com/soroushalinia/backupd/internal/source"
 	"github.com/soroushalinia/backupd/internal/state"
@@ -55,6 +56,11 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 		dest = discardStorage{Storage: dest}
 	}
 
+	limiter, err := rateLimiter(plan)
+	if err != nil {
+		return nil, err
+	}
+
 	snapID := newSnapshotID()
 
 	hr := hook.NewRunner().
@@ -69,7 +75,7 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 		}
 	}
 
-	totalSize, err := e.runSources(ctx, dest, plan, snapID)
+	totalSize, err := e.runSources(ctx, dest, plan, snapID, limiter)
 
 	if err != nil {
 		if !dryRun && plan.Hooks != nil {
@@ -124,7 +130,7 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 	}, nil
 }
 
-func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan config.Plan, snapID string) (totalSize int64, err error) {
+func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan config.Plan, snapID string, limiter *ratelimit.Limiter) (totalSize int64, err error) {
 	var fileManifests []*fileManifest
 
 	// On failure, remove the objects uploaded for this snapshot so a
@@ -165,7 +171,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		switch srcCfg.Type {
 		case "file":
 			log.Printf("  source %d: backing up files from %s ...", i, srcCfg.Path)
-			size, fm, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude, encKey)
+			size, fm, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude, encKey, limiter)
 			if err != nil {
 				return 0, fmt.Errorf("backing up files: %w", err)
 			}
@@ -203,7 +209,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 			return 0, fmt.Errorf("capturing source %d: %w", i, srcErr)
 		}
 
-		size, err := uploadAndEncrypt(ctx, dest, srcKey, r, encKey)
+		size, err := uploadAndEncrypt(ctx, dest, srcKey, r, encKey, limiter)
 		r.Close()
 		if err != nil {
 			return 0, fmt.Errorf("uploading source %d: %w", i, err)
@@ -264,9 +270,13 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 	return totalSize, nil
 }
 
-func uploadAndEncrypt(ctx context.Context, dest storage.Storage, key string, r io.Reader, encKey []byte) (int64, error) {
+func uploadAndEncrypt(ctx context.Context, dest storage.Storage, key string, r io.Reader, encKey []byte, limiter *ratelimit.Limiter) (int64, error) {
 	pr := progress.NewReader(r, key)
+	if limiter != nil {
+		pr = progress.NewReader(ratelimit.NewReader(ctx, pr, limiter), key)
+	}
 
+	// Spool the stream to a temp file so the upload has a known size:
 	// Spool the stream to a temp file so the upload has a known size:
 	// S3 single PUT is limited to 5 GiB, and minio-go only switches to
 	// multipart upload when the size is known.
@@ -358,6 +368,22 @@ func planKey(plan *config.Plan, salt []byte) ([]byte, error) {
 		return nil, fmt.Errorf("snapshot is encrypted but plan %q has no encryption.passphrase", plan.Name)
 	}
 	return crypto.DeriveKey(plan.Encryption.Passphrase, salt), nil
+}
+
+// rateLimiter builds the plan's upload/download limiter, or nil when the
+// plan has no rate-limit configured.
+func rateLimiter(plan config.Plan) (*ratelimit.Limiter, error) {
+	if plan.RateLimit == "" {
+		return nil, nil
+	}
+	rate, err := ratelimit.Parse(plan.RateLimit)
+	if err != nil {
+		return nil, fmt.Errorf("plan %q rate-limit: %w", plan.Name, err)
+	}
+	if rate == 0 {
+		return nil, nil
+	}
+	return ratelimit.New(rate), nil
 }
 
 type sourceEntry struct {

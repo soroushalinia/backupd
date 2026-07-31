@@ -1,6 +1,10 @@
 package config
 
-import "fmt"
+import (
+	"fmt"
+
+	"github.com/soroushalinia/backupd/internal/ratelimit"
+)
 
 func (c *Config) Validate() error {
 	if len(c.Plans) == 0 {
@@ -28,6 +32,11 @@ func (p *Plan) Validate() error {
 	}
 	if err := p.Destination.Validate(); err != nil {
 		return fmt.Errorf("destination: %w", err)
+	}
+	if p.RateLimit != "" {
+		if _, err := ratelimit.Parse(p.RateLimit); err != nil {
+			return fmt.Errorf("rate-limit: %w", err)
+		}
 	}
 	return nil
 }
