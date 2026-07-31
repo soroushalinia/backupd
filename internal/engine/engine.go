@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os"
 	"time"
 
 	"github.com/soroushalinia/backupd/internal/config"
@@ -219,29 +220,65 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 
 func uploadAndEncrypt(ctx context.Context, dest storage.Storage, key string, r io.Reader, encKey []byte) (int64, error) {
 	pr := progress.NewReader(r, key)
-	data, err := io.ReadAll(pr)
+
+	// Spool the stream to a temp file so the upload has a known size:
+	// S3 single PUT is limited to 5 GiB, and minio-go only switches to
+	// multipart upload when the size is known.
+	plain, err := os.CreateTemp("", "backupd-plain-*")
 	if err != nil {
+		return 0, fmt.Errorf("spooling source: %w", err)
+	}
+	defer os.Remove(plain.Name())
+	defer plain.Close()
+
+	if _, err := io.Copy(plain, pr); err != nil {
 		return 0, err
 	}
 	pr.Done()
 
-	if encKey != nil {
-		encrypted, err := crypto.Encrypt(encKey, data)
+	if encKey == nil {
+		size, err := plain.Seek(0, io.SeekEnd)
 		if err != nil {
-			return 0, fmt.Errorf("encrypting: %w", err)
-		}
-		log.Printf("  uploading %s (encrypted, %s)", key, formatBytes(int64(len(encrypted))))
-		if err := dest.Upload(ctx, key+".enc", bytes.NewReader(encrypted)); err != nil {
 			return 0, err
 		}
-		return int64(len(encrypted)), nil
+		if _, err := plain.Seek(0, io.SeekStart); err != nil {
+			return 0, err
+		}
+		log.Printf("  uploading %s (%s)", key, formatBytes(size))
+		if err := dest.Upload(ctx, key, plain); err != nil {
+			return 0, err
+		}
+		return size, nil
 	}
 
-	log.Printf("  uploading %s (%s)", key, formatBytes(int64(len(data))))
-	if err := dest.Upload(ctx, key, bytes.NewReader(data)); err != nil {
+	// Encrypt chunk-by-chunk into a second spool file: memory stays
+	// bounded and the ciphertext size is known for multipart.
+	enc, err := os.CreateTemp("", "backupd-enc-*")
+	if err != nil {
+		return 0, fmt.Errorf("spooling ciphertext: %w", err)
+	}
+	defer os.Remove(enc.Name())
+	defer enc.Close()
+
+	if _, err := plain.Seek(0, io.SeekStart); err != nil {
 		return 0, err
 	}
-	return int64(len(data)), nil
+	if err := crypto.StreamEncrypt(encKey, plain, enc); err != nil {
+		return 0, fmt.Errorf("encrypting: %w", err)
+	}
+
+	size, err := enc.Seek(0, io.SeekEnd)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := enc.Seek(0, io.SeekStart); err != nil {
+		return 0, err
+	}
+	log.Printf("  uploading %s (encrypted, %s)", key, formatBytes(size))
+	if err := dest.Upload(ctx, key+".enc", enc); err != nil {
+		return 0, err
+	}
+	return size, nil
 }
 
 type encryptionInfo struct {

@@ -64,7 +64,16 @@ func (s *S3Client) key(k string) string {
 }
 
 func (s *S3Client) Upload(ctx context.Context, key string, r io.Reader) error {
-	_, err := s.client.PutObject(ctx, s.bucket, s.key(key), r, -1,
+	size := int64(-1)
+	if seeker, ok := r.(io.Seeker); ok {
+		if end, err := seeker.Seek(0, io.SeekEnd); err == nil {
+			if _, err := seeker.Seek(0, io.SeekStart); err == nil {
+				size = end
+			}
+		}
+	}
+
+	_, err := s.client.PutObject(ctx, s.bucket, s.key(key), r, size,
 		minio.PutObjectOptions{ContentType: "application/octet-stream"})
 	if err != nil {
 		return fmt.Errorf("uploading %q: %w", key, err)

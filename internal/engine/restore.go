@@ -79,21 +79,25 @@ func (e *Engine) restoreSource(ctx context.Context, dest storage.Storage, srcKey
 	}
 	defer r.Close()
 
-	data, err := io.ReadAll(r)
+	if err := os.MkdirAll(target, 0755); err != nil {
+		return fmt.Errorf("creating target dir: %w", err)
+	}
+
+	out := filepath.Join(target, filepath.Base(srcKey))
+	f, err := os.Create(out)
 	if err != nil {
 		return err
 	}
 
 	if encKey != nil {
-		data, err = crypto.Decrypt(encKey, data)
-		if err != nil {
+		if err := crypto.StreamDecrypt(encKey, r, f); err != nil {
+			f.Close()
 			return fmt.Errorf("decrypting %q: %w", srcKey, err)
 		}
+	} else if _, err := io.Copy(f, r); err != nil {
+		f.Close()
+		return err
 	}
 
-	if err := os.MkdirAll(target, 0755); err != nil {
-		return fmt.Errorf("creating target dir: %w", err)
-	}
-	out := filepath.Join(target, filepath.Base(srcKey))
-	return os.WriteFile(out, data, 0644)
+	return f.Close()
 }

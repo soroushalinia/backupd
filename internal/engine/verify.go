@@ -103,15 +103,12 @@ func verifySource(ctx context.Context, dest storage.Storage, srcKey string, encK
 	}
 	defer sr.Close()
 
-	data, err := io.ReadAll(sr)
-	if err != nil {
-		return fmt.Errorf("reading source %s: %w", key, err)
-	}
-
 	if encKey != nil {
-		if _, err := crypto.Decrypt(encKey, data); err != nil {
+		if err := crypto.StreamDecrypt(encKey, sr, io.Discard); err != nil {
 			return fmt.Errorf("source %s: decryption failed: %w", srcKey, err)
 		}
+	} else if _, err := io.Copy(io.Discard, sr); err != nil {
+		return fmt.Errorf("reading source %s: %w", key, err)
 	}
 
 	return nil
