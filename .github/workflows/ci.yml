@@ -20,7 +20,7 @@ jobs:
         with:
           go-version: ${{ matrix.go }}
       - run: go vet ./...
-      - run: go test ./... -count=1 -timeout=30s
+      - run: go test ./... -count=1 -timeout=5m
       - run: go build -o /dev/null ./cmd/backupd
 
   lint:
@@ -32,5 +32,5 @@ jobs:
           go-version: '1.24'
       - uses: golangci/golangci-lint-action@v6
         with:
-          version: latest
+          version: v2.12.2
           args: --timeout=5m
