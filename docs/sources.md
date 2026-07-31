@@ -97,10 +97,15 @@ File sources and database dumps use an rsync-style delta algorithm:
 
 1. The source is walked; directories and symlinks are stored as manifest entries, and each regular
    file (or database dump stream) is split into fixed-size blocks.
-2. Each file is hashed once and compared against the previous snapshot's manifest; database dumps
-   reuse the previous dump's block references.
-3. Unchanged files and unchanged dump blocks reuse their previous block references; new or changed
-   blocks are uploaded only when the object does not already exist in storage.
+2. Each file is hashed once and compared against the previous snapshot's manifest; unchanged files
+   reuse their previous block references - zero uploads.
+3. Changed files and changed dumps are diffed against their previous version: the previous
+   version's blocks are downloaded once and signed (adler32 weak + SHA-256 strong checksums per
+   8 KiB block), then the new content is scanned with a rolling checksum. Ranges that still match
+   are recorded as references to objects already in storage - nothing uploaded - and only the
+   non-matching literal ranges are uploaded, deduplicated by content address.
 4. A new manifest records the source → block mapping, which restores reconstruct files from.
 
+Because matching is content-based, an insertion or deletion in the middle of a file costs only the
+bytes around the edit: shifted blocks are recognized even though every fixed block boundary moved.
 This keeps repeated backups cheap for large, mostly-unchanged datasets.

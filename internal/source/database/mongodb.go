@@ -21,12 +21,23 @@ func newMongoDB(cfg AdapterConfig) (Adapter, error) {
 func (m *mongoDBAdapter) Name() string { return "mongodb" }
 
 func (m *mongoDBAdapter) Dump(ctx context.Context) (io.ReadCloser, error) {
-	if m.cfg.DumpTool != "" {
-		return m.execDump(ctx)
+	if m.cfg.DumpTool == "" {
+		return nil, fmt.Errorf("native mongodb driver not implemented (use dump-tool: mongodump)")
 	}
-	return nil, fmt.Errorf("native mongodb driver not yet implemented (use dump-tool: mongodump)")
+	return m.execDump(ctx)
 }
 
+// execDump runs `mongodump --uri <dsn> --archive`; the archive flag with no
+// path makes mongodump write the dump archive to stdout, which the block
+// pipeline consumes as a stream.
 func (m *mongoDBAdapter) execDump(ctx context.Context) (io.ReadCloser, error) {
-	return nil, fmt.Errorf("mongodump exec adapter not implemented yet (use dump-tool: mongodump)")
+	a := &execAdapter{
+		name: "mongodb",
+		cmd:  m.cfg.DumpTool,
+		dsn:  m.cfg.DSN,
+		parseDSN: func(dsn string) []string {
+			return []string{"--uri", dsn, "--archive"}
+		},
+	}
+	return a.Dump(ctx)
 }

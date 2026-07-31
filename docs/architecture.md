@@ -82,10 +82,18 @@ Each run is cheap for unchanged data. The run reads the most recent snapshot's m
 1. **Pass 1 - hash**: every regular file is streamed once through SHA-256. If its hash matches the
    previous manifest *and* the size is unchanged, the file's block references are copied from the
    previous manifest - zero bytes uploaded, zero blocks touched.
-2. **Pass 2 - blocks**: for changed or new files, the file is streamed again, each block is
-   hashed (and encrypted), and the object is uploaded only if it does not already exist in the
-   bucket (`Exists` check). Repeated identical content across files costs one upload total.
-3. **Manifest**: the new manifest is written, pointing at reused and new block objects alike.
+2. **Pass 2 - rolling delta**: for files that exist in the previous manifest, the previous
+   version's blocks are downloaded once and signed (8 KiB blocks, adler32 weak + SHA-256 strong
+   checksums), and the new file is scanned against that signature with an rsync-style rolling
+   checksum. Ranges that still match are recorded as references to objects already in the bucket -
+   nothing uploaded - and only the non-matching literal ranges are encrypted and uploaded (each
+   deduplicated by content address). Content-based matching finds unchanged data even when an
+   insertion or deletion has shifted every fixed block boundary.
+3. **First-time files**: files with no previous version are split into fixed 8 KiB blocks; each
+   block is uploaded only if it does not already exist in the bucket.
+4. **Database dumps**: dumps go through the same rolling delta against the previous snapshot's
+   dump blocks; an unchanged database uploads only the manifest.
+5. **Manifest**: the new manifest is written, pointing at reused and new block objects alike.
 
 A backup of a large, unchanged dataset therefore uploads only the manifest itself.
 
@@ -141,9 +149,11 @@ Nothing stored is readable without the passphrase - see
 
 backupd streams instead of buffering:
 
-- File backup and restore move one 8 KiB block at a time; the whole file is never in memory (the
-  second read of a changed file typically hits the page cache). Database dumps go through the same
-  block pipeline.
+- File backup and restore move one 8 KiB block at a time (the second read of a changed file
+  typically hits the page cache). The rsync-style rolling delta of a changed file holds the new
+  content in memory for the duration of the diff against the previous version's signature; first
+  backups and unchanged files never buffer whole files. Database dumps go through the same block
+  pipeline.
 - Container (docker, kubernetes) archives are uploaded as **streaming multipart** in 8 MiB parts -
   no temporary files, memory bounded by one part, and the upload is aborted cleanly on failure.
   Storages without multipart support fall back to spooling the stream to a temporary file so the

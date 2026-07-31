@@ -211,10 +211,11 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 				return 0, fmt.Errorf("capturing source %d: %w", i, srcErr)
 			}
 
-			// Dumps go through the same content-addressed block
-			// pipeline as files: an unchanged database uploads nothing
-			// and a changed one uploads only the new blocks.
-			prevBlocks, err := e.previousDumpBlocks(ctx, dest, plan.Name)
+			// Dumps go through the same block pipeline as files: an
+			// unchanged database uploads nothing, and a changed one is
+			// diffed against its previous version with the rsync-style
+			// rolling delta, uploading only the parts that differ.
+			prevBlocks, err := e.previousDumpBlocks(ctx, dest, plan.Name, i)
 			if err != nil {
 				return 0, fmt.Errorf("loading previous dump blocks: %w", err)
 			}

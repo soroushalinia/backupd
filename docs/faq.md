@@ -16,9 +16,11 @@ Only if you want scheduled backups. Options:
 ## How does the delta algorithm work?
 
 Every file is hashed once on each run. Unchanged files (same hash as the previous snapshot's
-manifest) reuse their previous block references - zero uploads. Changed files are split into
-fixed-size 8 KiB blocks; each block is uploaded only if it does not already exist in the bucket.
-Blocks are content-addressed, so identical content anywhere in a plan shares one object, even
+manifest) reuse their previous block references - zero uploads. Changed files are diffed against
+their previous version with an rsync-style rolling checksum (adler32 weak + SHA-256 strong per
+8 KiB block): ranges that still match are referenced, and only the differing literal ranges are
+uploaded. Database dumps go through the same rolling delta against the previous dump. All new
+blocks are content-addressed, so identical content anywhere in a plan shares one object, even
 when encrypted. See [How It Works](architecture.md#incremental-backups) and
 [Sources](sources.md#delta-algorithm).
 

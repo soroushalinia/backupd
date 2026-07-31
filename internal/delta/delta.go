@@ -98,10 +98,7 @@ func Diff(sig *Signature, newContent io.Reader) ([]Op, error) {
 		literalBuf.WriteByte(data[pos])
 
 		if pos+blockSize < len(data) {
-			oldByte := uint32(data[pos])
-			newByte := uint32(data[pos+blockSize])
-			a = (a - oldByte + newByte) % 65521
-			b = (b - uint32(blockSize)*oldByte + a) % 65521
+			a, b = rollUpdate(a, b, blockSize, uint32(data[pos]), uint32(data[pos+blockSize]))
 			weak = (b << 16) | a
 		}
 		pos++
@@ -171,6 +168,31 @@ func rollInit(data []byte) (uint32, uint32) {
 		b = (b + a) % 65521
 	}
 	return a, b
+}
+
+// rollUpdate slides the rolling checksum one byte forward: old leaves the
+// window and new enters it. Two subtleties:
+//
+//   - The updates must stay in signed arithmetic: on uint32 a negative
+//     a-old would wrap and the % 65521 would then be off by 2^32 mod
+//     65521, corrupting every weak checksum from that point on.
+//   - Because rollInit starts a at 1 (true adler32), the b-sum carries a
+//     leading n that shifts out of the window as it slides; the update is
+//     therefore b' = b - n*old + a' - 1. The classic rsync formula has no
+//     -1 because it initializes its sums to 0 instead.
+func rollUpdate(a, b uint32, blockSize int, old, new uint32) (uint32, uint32) {
+	a = mod65521(int64(a) - int64(old) + int64(new))
+	b = mod65521(int64(b) - int64(blockSize)*int64(old) + int64(a) - 1)
+	return a, b
+}
+
+// mod65521 returns v reduced modulo 65521 with a non-negative result.
+func mod65521(v int64) uint32 {
+	v %= 65521
+	if v < 0 {
+		v += 65521
+	}
+	return uint32(v)
 }
 
 func adler32(data []byte) uint32 {

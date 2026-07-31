@@ -82,20 +82,24 @@ func (e *Engine) previousSources(ctx context.Context, dest storage.Storage, plan
 	return manifest.Sources, nil
 }
 
-// previousDumpBlocks returns the block references of database sources from
-// the most recent snapshot manifest, used to skip already-uploaded blocks.
-func (e *Engine) previousDumpBlocks(ctx context.Context, dest storage.Storage, planName string) ([]blockRef, error) {
+// previousDumpBlocks returns the block references of the database source at
+// the same plan position from the most recent snapshot manifest. They are
+// the base for the rsync-style delta of the new dump: copy operations
+// reference them by index, so they must belong to the same dump, not just
+// the same plan. A source that did not exist before (or changed position)
+// has no base and falls back to a full block upload.
+func (e *Engine) previousDumpBlocks(ctx context.Context, dest storage.Storage, planName string, srcIndex int) ([]blockRef, error) {
 	sources, err := e.previousSources(ctx, dest, planName)
 	if err != nil || sources == nil {
 		return nil, err
 	}
-	var blocks []blockRef
+	base := fmt.Sprintf("/sources/%d.sql", srcIndex)
 	for _, src := range sources {
-		if src.Type == "database" {
-			blocks = append(blocks, src.Blocks...)
+		if src.Type == "database" && strings.HasSuffix(src.Key, base) {
+			return src.Blocks, nil
 		}
 	}
-	return blocks, nil
+	return nil, nil
 }
 
 func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string, encKey []byte, limiter *ratelimit.Limiter) (int64, *fileManifest, error) {
@@ -209,18 +213,25 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 
 		log.Printf("  changed: %s (%s)", rel, formatBytes(fi.Size()))
 
-		knownBlocks := make(map[string]bool)
-		if hadPrev {
-			for _, b := range prevRef.Blocks {
-				knownBlocks[b.ID] = true
-			}
-		}
-
-		// Pass 2: stream again, processing each block (hash, encrypt,
-		// upload if new). The second read typically hits the page cache.
+		// Pass 2: stream again. When a previous version exists, diff the
+		// file against the previous version's blocks with the rsync-style
+		// rolling checksum: matching ranges become references to blocks
+		// already in storage, and only the non-matching literals are
+		// uploaded - so even a file shifted by an insertion in the middle
+		// uploads only the new bytes. First-time files go through the plain
+		// block pipeline. The second read typically hits the page cache.
 		before := total
-		err = processFileBlocks(ctx, dest, planName, path, &ref, knownBlocks, encKey, limiter, &total)
-		if err != nil {
+		if hadPrev && len(prevRef.Blocks) > 0 {
+			f, err := os.Open(path)
+			if err != nil {
+				return err
+			}
+			ref.Blocks, err = e.backupStreamWithRollingDelta(ctx, dest, planName, f, prevRef.Blocks, encKey, limiter, &total)
+			f.Close()
+			if err != nil {
+				return err
+			}
+		} else if err := processFileBlocks(ctx, dest, planName, path, &ref, encKey, limiter, &total); err != nil {
 			return err
 		}
 
@@ -267,125 +278,193 @@ func hashFile(path string) ([]byte, error) {
 
 // processFileBlocks streams a file in fixed-size blocks, encrypting each
 // block and uploading it only when it does not exist in storage yet.
-func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path string, ref *fileBlockRef, knownBlocks map[string]bool, encKey []byte, limiter *ratelimit.Limiter, total *int64) error {
+func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path string, ref *fileBlockRef, encKey []byte, limiter *ratelimit.Limiter, total *int64) error {
 	f, err := os.Open(path)
 	if err != nil {
 		return fmt.Errorf("opening %s: %w", path, err)
 	}
 	defer f.Close()
 
-	blockSize := delta.DefaultBlockSize
-	buf := make([]byte, blockSize)
+	buf := make([]byte, delta.DefaultBlockSize)
 	for {
-		n, err := io.ReadFull(f, buf)
-		if n == 0 && err == io.EOF {
+		n, readErr := io.ReadFull(f, buf)
+		if n == 0 && readErr == io.EOF {
 			break
 		}
-		if n == 0 && err != nil {
-			return fmt.Errorf("reading %s: %w", path, err)
+		if n == 0 && readErr != nil {
+			return fmt.Errorf("reading %s: %w", path, readErr)
 		}
 
-		block := buf[:n]
-		plainHash := sha256.Sum256(block)
-		blockID := hex.EncodeToString(plainHash[:])
-		stored := block
-
-		if encKey != nil {
-			enc, err := crypto.EncryptBlock(encKey, block)
-			if err != nil {
-				return fmt.Errorf("encrypting block of %s: %w", path, err)
-			}
-			stored = enc
-			idHash := sha256.Sum256(enc)
-			blockID = hex.EncodeToString(idHash[:])
+		block, err := uploadBlockIfNew(ctx, dest, planName, buf[:n], encKey, limiter, total)
+		if err != nil {
+			return fmt.Errorf("block of %s: %w", path, err)
 		}
+		ref.Blocks = append(ref.Blocks, block)
 
-		ref.Blocks = append(ref.Blocks, blockRef{ID: blockID, Hash: hex.EncodeToString(plainHash[:])})
-
-		if !knownBlocks[blockID] {
-			blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
-			exists, err := dest.Exists(ctx, blockKey)
-			if err != nil {
-				return fmt.Errorf("checking block %s: %w", blockID, err)
-			}
-			if !exists {
-				if err := dest.Upload(ctx, blockKey, ratelimit.NewReader(ctx, bytes.NewReader(stored), limiter)); err != nil {
-					return fmt.Errorf("uploading block: %w", err)
-				}
-				*total += int64(len(stored))
-			}
-		}
-
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return fmt.Errorf("reading %s: %w", path, err)
-		}
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
 			break
+		}
+		if readErr != nil {
+			return fmt.Errorf("reading %s: %w", path, readErr)
 		}
 	}
 	return nil
 }
 
-// backupDumpBlocks streams a source dump (database) in fixed-size blocks,
-// content-addressing and uploading only blocks not already in storage. The
-// blocks share the plan's block namespace with file sources, so an
-// unchanged database uploads nothing and a changed one uploads only the
-// blocks that differ.
-func (e *Engine) backupDumpBlocks(ctx context.Context, dest storage.Storage, planName string, r io.Reader, prevBlocks []blockRef, encKey []byte, limiter *ratelimit.Limiter) (int64, []blockRef, error) {
-	knownBlocks := make(map[string]bool)
-	for _, b := range prevBlocks {
-		knownBlocks[b.ID] = true
+// uploadBlockIfNew encrypts a plaintext block when the plan is encrypted,
+// then uploads it unless a block with the same content-addressed id already
+// exists in storage. The returned block reference is what manifests record;
+// the uploaded byte count is added to total.
+func uploadBlockIfNew(ctx context.Context, dest storage.Storage, planName string, plain []byte, encKey []byte, limiter *ratelimit.Limiter, total *int64) (blockRef, error) {
+	plainHash := sha256.Sum256(plain)
+	blockID := hex.EncodeToString(plainHash[:])
+	stored := plain
+
+	if encKey != nil {
+		enc, err := crypto.EncryptBlock(encKey, plain)
+		if err != nil {
+			return blockRef{}, fmt.Errorf("encrypting block: %w", err)
+		}
+		stored = enc
+		idHash := sha256.Sum256(enc)
+		blockID = hex.EncodeToString(idHash[:])
 	}
 
-	var total int64
+	ref := blockRef{ID: blockID, Hash: hex.EncodeToString(plainHash[:])}
+
+	blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
+	exists, err := dest.Exists(ctx, blockKey)
+	if err != nil {
+		return blockRef{}, fmt.Errorf("checking block %s: %w", blockID, err)
+	}
+	if !exists {
+		if err := dest.Upload(ctx, blockKey, ratelimit.NewReader(ctx, bytes.NewReader(stored), limiter)); err != nil {
+			return blockRef{}, fmt.Errorf("uploading block: %w", err)
+		}
+		*total += int64(len(stored))
+	}
+	return ref, nil
+}
+
+// backupStreamWithRollingDelta backs up a stream against its previous
+// version with the rsync-style rolling-checksum delta. The previous
+// version's blocks are downloaded once as the base and signed; the new
+// stream is then diffed against the signature. Ranges that match are
+// recorded as references to blocks already in storage (nothing uploaded),
+// and only the non-matching literal ranges are split into blocks and
+// uploaded. The result is a plain block reference list, so restore and
+// verify work exactly as for a full backup.
+func (e *Engine) backupStreamWithRollingDelta(ctx context.Context, dest storage.Storage, planName string, r io.Reader, prevBlocks []blockRef, encKey []byte, limiter *ratelimit.Limiter, total *int64) ([]blockRef, error) {
+	sig, err := delta.Sign(&blockReader{
+		ctx:     ctx,
+		dest:    dest,
+		plan:    planName,
+		blocks:  prevBlocks,
+		encKey:  encKey,
+		limiter: limiter,
+	}, delta.DefaultBlockSize)
+	if err != nil {
+		return nil, fmt.Errorf("signing previous version: %w", err)
+	}
+
+	ops, err := delta.Diff(sig, r)
+	if err != nil {
+		return nil, fmt.Errorf("computing delta: %w", err)
+	}
+
 	var refs []blockRef
-	blockSize := delta.DefaultBlockSize
-	buf := make([]byte, blockSize)
+	for _, op := range ops {
+		if op.Copy {
+			if op.Index < 0 || op.Index >= len(prevBlocks) {
+				return nil, fmt.Errorf("delta references block %d out of range", op.Index)
+			}
+			refs = append(refs, prevBlocks[op.Index])
+			continue
+		}
+		for off := 0; off < len(op.Data); off += delta.DefaultBlockSize {
+			end := off + delta.DefaultBlockSize
+			if end > len(op.Data) {
+				end = len(op.Data)
+			}
+			ref, err := uploadBlockIfNew(ctx, dest, planName, op.Data[off:end], encKey, limiter, total)
+			if err != nil {
+				return nil, err
+			}
+			refs = append(refs, ref)
+		}
+	}
+	return refs, nil
+}
+
+// blockReader streams the plaintext contents of a block reference list in
+// order, downloading (and decrypting) one block at a time. It is the base
+// reader for the rolling-checksum signature of a previous version.
+type blockReader struct {
+	ctx     context.Context
+	dest    storage.Storage
+	plan    string
+	blocks  []blockRef
+	encKey  []byte
+	limiter *ratelimit.Limiter
+	cur     []byte
+	off     int
+	idx     int
+}
+
+func (r *blockReader) Read(p []byte) (int, error) {
 	for {
-		n, err := io.ReadFull(r, buf)
-		if n == 0 && err == io.EOF {
+		if r.off < len(r.cur) {
+			n := copy(p, r.cur[r.off:])
+			r.off += n
+			return n, nil
+		}
+		if r.idx >= len(r.blocks) {
+			return 0, io.EOF
+		}
+		blk, err := downloadBlock(r.ctx, r.dest, r.plan, r.blocks[r.idx], r.encKey, r.limiter)
+		if err != nil {
+			return 0, err
+		}
+		r.cur, r.off = blk, 0
+		r.idx++
+	}
+}
+
+// backupDumpBlocks streams a source dump (database) into storage. When the
+// previous snapshot has blocks for the same source, the new dump is diffed
+// against them with the rsync-style rolling delta: matching ranges become
+// references to already-stored blocks and only the differing literals are
+// uploaded. Without a base, the dump is split into fixed-size
+// content-addressed blocks, uploading only blocks not already in storage.
+func (e *Engine) backupDumpBlocks(ctx context.Context, dest storage.Storage, planName string, r io.Reader, prevBlocks []blockRef, encKey []byte, limiter *ratelimit.Limiter) (int64, []blockRef, error) {
+	var total int64
+	if len(prevBlocks) > 0 {
+		refs, err := e.backupStreamWithRollingDelta(ctx, dest, planName, r, prevBlocks, encKey, limiter, &total)
+		return total, refs, err
+	}
+
+	var refs []blockRef
+	buf := make([]byte, delta.DefaultBlockSize)
+	for {
+		n, readErr := io.ReadFull(r, buf)
+		if n == 0 && readErr == io.EOF {
 			break
 		}
-		if n == 0 && err != nil {
-			return 0, nil, fmt.Errorf("reading dump: %w", err)
+		if n == 0 && readErr != nil {
+			return 0, nil, fmt.Errorf("reading dump: %w", readErr)
 		}
 
-		block := buf[:n]
-		plainHash := sha256.Sum256(block)
-		blockID := hex.EncodeToString(plainHash[:])
-		stored := block
-
-		if encKey != nil {
-			enc, err := crypto.EncryptBlock(encKey, block)
-			if err != nil {
-				return 0, nil, fmt.Errorf("encrypting dump block: %w", err)
-			}
-			stored = enc
-			idHash := sha256.Sum256(enc)
-			blockID = hex.EncodeToString(idHash[:])
+		ref, err := uploadBlockIfNew(ctx, dest, planName, buf[:n], encKey, limiter, &total)
+		if err != nil {
+			return 0, nil, err
 		}
+		refs = append(refs, ref)
 
-		refs = append(refs, blockRef{ID: blockID, Hash: hex.EncodeToString(plainHash[:])})
-
-		if !knownBlocks[blockID] {
-			blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
-			exists, err := dest.Exists(ctx, blockKey)
-			if err != nil {
-				return 0, nil, fmt.Errorf("checking block %s: %w", blockID, err)
-			}
-			if !exists {
-				if err := dest.Upload(ctx, blockKey, ratelimit.NewReader(ctx, bytes.NewReader(stored), limiter)); err != nil {
-					return 0, nil, fmt.Errorf("uploading block: %w", err)
-				}
-				total += int64(len(stored))
-			}
-		}
-
-		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
-			return 0, nil, fmt.Errorf("reading dump: %w", err)
-		}
-		if err == io.EOF || err == io.ErrUnexpectedEOF {
+		if readErr == io.EOF || readErr == io.ErrUnexpectedEOF {
 			break
+		}
+		if readErr != nil {
+			return 0, nil, fmt.Errorf("reading dump: %w", readErr)
 		}
 	}
 	return total, refs, nil

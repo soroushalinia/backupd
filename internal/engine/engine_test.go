@@ -374,6 +374,112 @@ func TestEngineRunIncrementalEncrypted(t *testing.T) {
 	}
 }
 
+// A mid-file insertion shifts every block boundary, so fixed-size block
+// dedup would re-upload most of the file. The rsync-style rolling delta
+// must instead match the shifted blocks against the previous version and
+// upload only the inserted bytes - and the snapshot must still verify and
+// restore to the exact new content.
+func TestEngineRunRollingDelta(t *testing.T) {
+	src := t.TempDir()
+	path := filepath.Join(src, "data.bin")
+
+	content := make([]byte, 60000)
+	x := uint64(0x9e3779b97f4a7c15)
+	for i := range content {
+		x ^= x << 13
+		x ^= x >> 7
+		x ^= x << 17
+		content[i] = byte(x)
+	}
+	if err := os.WriteFile(path, content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "delta-test",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{Type: "s3", Bucket: "b", Endpoint: "e"},
+	}
+
+	first, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	blocksAfterFirst := 0
+	for key := range st.data {
+		if strings.HasPrefix(key, "delta-test/blocks/") {
+			blocksAfterFirst++
+		}
+	}
+
+	// Insert 1000 bytes in the middle: everything after the insertion
+	// point shifts by 1000 bytes, so no fixed-size block boundary lines
+	// up with the previous version anymore.
+	inserted := bytes.Repeat([]byte{0xAB}, 1000)
+	shifted := make([]byte, 0, len(content)+len(inserted))
+	shifted = append(shifted, content[:30000]...)
+	shifted = append(shifted, inserted...)
+	shifted = append(shifted, content[30000:]...)
+	if err := os.WriteFile(path, shifted, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	second, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// A full re-upload of the shifted remainder would be far larger
+	// (~36 KiB); the rolling delta matches the shifted blocks against the
+	// previous version and uploads only the literal runs (~4 KiB).
+	if second.Size > 30000 {
+		t.Errorf("rolling delta uploaded %d bytes, want far less than the shifted remainder", second.Size)
+	}
+
+	// The new snapshot is self-contained: copied block references point
+	// at objects still in storage, so verify and restore work unchanged.
+	if err := eng.Verify(context.Background(), plan, second.SnapshotID, st); err != nil {
+		t.Errorf("verify snapshot 2: %v", err)
+	}
+	dst := t.TempDir()
+	if err := eng.Restore(context.Background(), plan, second.SnapshotID, dst, st); err != nil {
+		t.Fatal(err)
+	}
+	got, err := os.ReadFile(filepath.Join(dst, "data.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, shifted) {
+		t.Fatal("restored file mismatch after rolling delta")
+	}
+
+	// Restoring the first snapshot must still work: the delta run must
+	// not have invalidated the blocks the first snapshot references.
+	if err := eng.Verify(context.Background(), plan, first.SnapshotID, st); err != nil {
+		t.Errorf("verify snapshot 1: %v", err)
+	}
+	blocksAfterSecond := 0
+	for key := range st.data {
+		if strings.HasPrefix(key, "delta-test/blocks/") {
+			blocksAfterSecond++
+		}
+	}
+	if blocksAfterSecond-blocksAfterFirst > 4 {
+		t.Errorf("delta run added %d blocks, want only the literal runs", blocksAfterSecond-blocksAfterFirst)
+	}
+}
+
 func TestEngineDatabaseSourceIncremental(t *testing.T) {
 	if _, err := exec.LookPath("sqlite3"); err != nil {
 		t.Skip("sqlite3 not available")

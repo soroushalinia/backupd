@@ -3,6 +3,7 @@ package delta
 import (
 	"bytes"
 	"crypto/rand"
+	mrand "math/rand"
 	"testing"
 )
 
@@ -280,5 +281,78 @@ func BenchmarkDiffApply(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		ops, _ := DiffBytes(sig, modified)
 		_, _ = Apply(base, sig.BlockSize, ops)
+	}
+}
+
+// The rolling checksum must stay identical to a full recomputation of every
+// window. The old uint32 update wrapped on negative intermediates and
+// drifted permanently after the first one, silently losing all later
+// matches - these tests are the regression guard for that.
+func TestRollMatchesFullRecompute(t *testing.T) {
+	rng := mrand.New(mrand.NewSource(1))
+	data := make([]byte, 3*DefaultBlockSize+100)
+	rng.Read(data)
+
+	a, b := rollInit(data[:DefaultBlockSize])
+	for pos := 0; pos+DefaultBlockSize < len(data); pos++ {
+		wantA, wantB := rollInit(data[pos : pos+DefaultBlockSize])
+		if a != wantA || b != wantB {
+			t.Fatalf("pos %d: rolling (%d,%d) != full (%d,%d)", pos, a, b, wantA, wantB)
+		}
+		a, b = rollUpdate(a, b, DefaultBlockSize, uint32(data[pos]), uint32(data[pos+DefaultBlockSize]))
+	}
+}
+
+func TestRollMatchesFullRecomputeSmallBlock(t *testing.T) {
+	rng := mrand.New(mrand.NewSource(2))
+	data := make([]byte, 1000)
+	rng.Read(data)
+
+	const bs = 4
+	a, b := rollInit(data[:bs])
+	for pos := 0; pos+bs < len(data); pos++ {
+		wantA, wantB := rollInit(data[pos : pos+bs])
+		if a != wantA || b != wantB {
+			t.Fatalf("pos %d: rolling (%d,%d) != full (%d,%d)", pos, a, b, wantA, wantB)
+		}
+		a, b = rollUpdate(a, b, bs, uint32(data[pos]), uint32(data[pos+bs]))
+	}
+}
+
+// A file shifted by a few bytes of inserted content must still match all of
+// its old blocks: the rolling checksum exists precisely to find block
+// boundaries that no longer line up. Fixed-size hashing would miss every
+// match here.
+func TestDiffShiftedContent(t *testing.T) {
+	rng := mrand.New(mrand.NewSource(42))
+	base := make([]byte, 4*DefaultBlockSize)
+	rng.Read(base)
+	shifted := append([]byte{0xAA, 0xBB, 0xCC, 0xDD, 0xEE}, base...)
+
+	sig, err := Sign(bytes.NewReader(base), DefaultBlockSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	ops, err := Diff(sig, bytes.NewReader(shifted))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	copies := 0
+	for _, op := range ops {
+		if op.Copy {
+			copies++
+		}
+	}
+	if copies != 4 {
+		t.Errorf("shifted content matched %d blocks, want 4", copies)
+	}
+
+	reconstructed, err := Apply(base, sig.BlockSize, ops)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(reconstructed, shifted) {
+		t.Fatal("Apply(ops) of shifted content mismatch")
 	}
 }
