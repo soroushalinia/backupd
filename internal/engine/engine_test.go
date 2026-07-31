@@ -20,6 +20,8 @@ type testStorage struct {
 	data map[string][]byte
 }
 
+const deltaBlockSize = 8192
+
 func (s *testStorage) Upload(ctx context.Context, key string, r io.Reader) error {
 	b, err := io.ReadAll(r)
 	if err != nil {
@@ -45,7 +47,13 @@ func (s *testStorage) Delete(ctx context.Context, key string) error {
 	return nil
 }
 func (s *testStorage) List(ctx context.Context, prefix string) ([]storage.ObjectInfo, error) {
-	return nil, nil
+	var result []storage.ObjectInfo
+	for k := range s.data {
+		if strings.HasPrefix(k, prefix) {
+			result = append(result, storage.ObjectInfo{Key: k})
+		}
+	}
+	return result, nil
 }
 func (s *testStorage) Exists(ctx context.Context, key string) (bool, error) {
 	_, ok := s.data[key]
@@ -760,6 +768,89 @@ func TestFailedRunCleansUpUploadedSources(t *testing.T) {
 		if strings.HasPrefix(key, prefix) {
 			t.Errorf("failed run left snapshot object %q behind", key)
 		}
+	}
+}
+
+func TestFailedRunGCsOrphanedBlocks(t *testing.T) {
+	src := t.TempDir()
+	content := bytes.Repeat([]byte("x"), 3*deltaBlockSize)
+	if err := os.WriteFile(filepath.Join(src, "data.bin"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	st := &failStorage{testStorage: testStorage{}, failOn: "manifest.json"}
+	eng := New(store)
+
+	plan := config.Plan{
+		Name: "gc-fail",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+	}
+
+	if _, err := eng.Run(context.Background(), plan, st); err == nil {
+		t.Fatal("expected run to fail")
+	}
+
+	// The failed run uploaded blocks before the manifest write aborted;
+	// GC must have reclaimed them, leaving nothing behind.
+	for key := range st.data {
+		t.Errorf("failed run left object %q behind", key)
+	}
+}
+
+func TestRunWithoutRetentionGCsOrphans(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), []byte("some content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	st := &testStorage{data: map[string][]byte{}}
+	eng := New(store)
+
+	plan := config.Plan{
+		Name: "gc-noretain",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+	}
+
+	// An orphan block left over from an earlier failure.
+	st.data["gc-noretain/blocks/orphan1"] = []byte("junk")
+
+	if _, err := eng.Run(context.Background(), plan, st); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, ok := st.data["gc-noretain/blocks/orphan1"]; ok {
+		t.Error("expected orphan block to be gc'd even without retention")
+	}
+	kept := false
+	for key := range st.data {
+		if strings.HasPrefix(key, "gc-noretain/blocks/") {
+			kept = true
+		}
+	}
+	if !kept {
+		t.Error("expected referenced blocks to remain")
 	}
 }
 

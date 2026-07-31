@@ -78,6 +78,15 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 	totalSize, err := e.runSources(ctx, dest, plan, snapID, limiter)
 
 	if err != nil {
+		// A failed run may have uploaded content-addressed blocks
+		// before aborting; collect them as soon as the snapshot
+		// objects are cleaned up so they do not linger in the bucket.
+		if !dryRun {
+			pruner := retention.NewPruner(e.store)
+			if gcerr := pruner.GCBlocks(ctx, plan.Name, dest); gcerr != nil {
+				log.Printf("gc error for %q: %v", plan.Name, gcerr)
+			}
+		}
 		if !dryRun && plan.Hooks != nil {
 			hr.WithEnv("BACKUPD_STATUS", "failure")
 			if hookErr := hr.RunAll(ctx, plan.Hooks.OnFailure); hookErr != nil {
@@ -117,6 +126,13 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 		policy := retention.FromConfig(plan.Retention)
 		if err := pruner.Prune(ctx, plan.Name, policy, dest); err != nil {
 			log.Printf("prune error for %q: %v", plan.Name, err)
+		}
+	} else {
+		// Without a retention policy nothing is ever pruned, but
+		// orphaned blocks still need to be reclaimed eventually.
+		pruner := retention.NewPruner(e.store)
+		if err := pruner.GCBlocks(ctx, plan.Name, dest); err != nil {
+			log.Printf("gc error for %q: %v", plan.Name, err)
 		}
 	}
 
