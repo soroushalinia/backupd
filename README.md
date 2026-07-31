@@ -14,6 +14,15 @@ Full documentation: <https://soroushalinia.github.io/backupd/>
 
 Changelog: [CHANGELOG.md](CHANGELOG.md)
 
+## Install
+
+```shell
+curl -fsSL https://raw.githubusercontent.com/soroushalinia/backupd/main/install.sh | sh
+```
+
+Installs the latest release to `/usr/local/bin` (override with `PREFIX`, pin with `VERSION`).
+See the [installation guide](https://soroushalinia.github.io/backupd/installation/).
+
 ## Features
 
 - Declarative YAML config with `${ENV_VAR}` interpolation
