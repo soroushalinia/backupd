@@ -525,6 +525,9 @@ func TestFailedRunCleansUpUploadedSources(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
 	}
+	if err := exec.Command("docker", "info").Run(); err != nil {
+		t.Skip("docker daemon not available")
+	}
 
 	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
