@@ -118,75 +118,42 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 		}
 		log.Printf("  delta file: %s (%s)", rel, formatBytes(fi.Size()))
 
-		data, err := os.ReadFile(path)
-		if err != nil {
-			return fmt.Errorf("reading %s: %w", path, err)
-		}
-
-		fileHash := sha256.Sum256(data)
-		fileHashStr := hex.EncodeToString(fileHash[:])
-
 		ref := fileBlockRef{
-			Path:     rel,
-			Size:     fi.Size(),
-			Mode:     fi.Mode(),
-			FileHash: fileHashStr,
+			Path: rel,
+			Size: fi.Size(),
+			Mode: fi.Mode(),
 		}
+
+		prevRef, hadPrev := prevFiles[rel]
+
+		// Pass 1: stream the file once to compute its hash without
+		// buffering it in memory.
+		fileHash, err := hashFile(path)
+		if err != nil {
+			return err
+		}
+		ref.FileHash = hex.EncodeToString(fileHash)
 
 		// Unchanged file: reuse the block references from the previous
-		// manifest without hashing, re-encrypting, or checking the storage.
-		if prevRef, ok := prevFiles[rel]; ok && prevRef.FileHash == fileHashStr {
+		// manifest without re-encrypting or re-checking storage.
+		if hadPrev && prevRef.FileHash == ref.FileHash {
 			ref.Blocks = prevRef.Blocks
 			manifest.Files = append(manifest.Files, ref)
 			return nil
 		}
 
 		knownBlocks := make(map[string]bool)
-		if prevRef, ok := prevFiles[rel]; ok {
+		if hadPrev {
 			for _, b := range prevRef.Blocks {
 				knownBlocks[b.ID] = true
 			}
 		}
 
-		sig := delta.SignBytes(data, delta.DefaultBlockSize)
-		for i, b := range sig.Blocks {
-			start := i * delta.DefaultBlockSize
-			end := start + delta.DefaultBlockSize
-			if end > len(data) {
-				end = len(data)
-			}
-			block := data[start:end]
-
-			plainHash := b.Strong
-			blockID := hex.EncodeToString(plainHash[:])
-			stored := block
-
-			if encKey != nil {
-				enc, err := crypto.EncryptBlock(encKey, block)
-				if err != nil {
-					return fmt.Errorf("encrypting block of %s: %w", rel, err)
-				}
-				stored = enc
-				idHash := sha256.Sum256(enc)
-				blockID = hex.EncodeToString(idHash[:])
-			}
-
-			ref.Blocks = append(ref.Blocks, blockRef{ID: blockID, Hash: hex.EncodeToString(plainHash[:])})
-
-			if knownBlocks[blockID] {
-				continue
-			}
-			blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
-			exists, err := dest.Exists(ctx, blockKey)
-			if err != nil {
-				return fmt.Errorf("checking block %s: %w", blockID, err)
-			}
-			if !exists {
-				if err := dest.Upload(ctx, blockKey, bytes.NewReader(stored)); err != nil {
-					return fmt.Errorf("uploading block: %w", err)
-				}
-				total += int64(len(stored))
-			}
+		// Pass 2: stream again, processing each block (hash, encrypt,
+		// upload if new). The second read typically hits the page cache.
+		err = processFileBlocks(ctx, dest, planName, path, &ref, knownBlocks, encKey, &total)
+		if err != nil {
+			return err
 		}
 
 		manifest.Files = append(manifest.Files, ref)
@@ -199,6 +166,83 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 
 	log.Printf("  delta complete: %d files, %s new/changed blocks", len(manifest.Files), formatBytes(total))
 	return total, manifest, nil
+}
+
+// hashFile streams a file through sha256, returning the digest. Memory use is
+// bounded by the block size regardless of file size.
+func hashFile(path string) ([]byte, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer f.Close()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return nil, fmt.Errorf("hashing %s: %w", path, err)
+	}
+	return h.Sum(nil), nil
+}
+
+// processFileBlocks streams a file in fixed-size blocks, encrypting each
+// block and uploading it only when it does not exist in storage yet.
+func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path string, ref *fileBlockRef, knownBlocks map[string]bool, encKey []byte, total *int64) error {
+	f, err := os.Open(path)
+	if err != nil {
+		return fmt.Errorf("opening %s: %w", path, err)
+	}
+	defer f.Close()
+
+	blockSize := delta.DefaultBlockSize
+	buf := make([]byte, blockSize)
+	for {
+		n, err := io.ReadFull(f, buf)
+		if n == 0 && err == io.EOF {
+			break
+		}
+		if n == 0 && err != nil {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+
+		block := buf[:n]
+		plainHash := sha256.Sum256(block)
+		blockID := hex.EncodeToString(plainHash[:])
+		stored := block
+
+		if encKey != nil {
+			enc, err := crypto.EncryptBlock(encKey, block)
+			if err != nil {
+				return fmt.Errorf("encrypting block of %s: %w", path, err)
+			}
+			stored = enc
+			idHash := sha256.Sum256(enc)
+			blockID = hex.EncodeToString(idHash[:])
+		}
+
+		ref.Blocks = append(ref.Blocks, blockRef{ID: blockID, Hash: hex.EncodeToString(plainHash[:])})
+
+		if !knownBlocks[blockID] {
+			blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
+			exists, err := dest.Exists(ctx, blockKey)
+			if err != nil {
+				return fmt.Errorf("checking block %s: %w", blockID, err)
+			}
+			if !exists {
+				if err := dest.Upload(ctx, blockKey, bytes.NewReader(stored)); err != nil {
+					return fmt.Errorf("uploading block: %w", err)
+				}
+				*total += int64(len(stored))
+			}
+		}
+
+		if err != nil && err != io.EOF && err != io.ErrUnexpectedEOF {
+			return fmt.Errorf("reading %s: %w", path, err)
+		}
+		if err == io.EOF || err == io.ErrUnexpectedEOF {
+			break
+		}
+	}
+	return nil
 }
 
 func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte) error {
