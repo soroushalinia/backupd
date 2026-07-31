@@ -12,6 +12,8 @@ Declarative S3-compatible backup daemon. Define your backup plans in a single YA
 
 Full documentation: <https://soroushalinia.github.io/backupd/>
 
+Changelog: [CHANGELOG.md](CHANGELOG.md)
+
 ## Features
 
 - Declarative YAML config with `${ENV_VAR}` interpolation
