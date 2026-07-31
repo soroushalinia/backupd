@@ -1,20 +1,35 @@
+version: "2"
+run:
+  timeout: 5m
+  tests: false
 linters:
+  default: none
   enable:
     - errcheck
     - govet
     - staticcheck
     - unused
-
-issues:
-  exclude-dirs:
-    - vendor
-
-run:
-  timeout: 5m
-  tests: false
-
-linters-settings:
-  errcheck:
-    exclude-functions:
-      - encoding/binary.Write
-      - io.WriteString
+  settings:
+    errcheck:
+      exclude-functions:
+        - encoding/binary.Write
+        - io.WriteString
+  exclusions:
+    generated: lax
+    presets:
+      - comments
+      - common-false-positives
+      - legacy
+      - std-error-handling
+    paths:
+      - vendor
+      - third_party$
+      - builtin$
+      - examples$
+formatters:
+  exclusions:
+    generated: lax
+    paths:
+      - third_party$
+      - builtin$
+      - examples$

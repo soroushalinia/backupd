@@ -128,7 +128,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		switch srcCfg.Type {
 		case "file":
 			log.Printf("  source %d: backing up files from %s ...", i, srcCfg.Path)
-			size, fm, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude)
+			size, fm, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude, encKey)
 			if err != nil {
 				return 0, fmt.Errorf("backing up files: %w", err)
 			}
@@ -258,12 +258,23 @@ func encryptionKey(enc *config.Encryption) (*encryptionInfo, []byte, error) {
 	if err != nil {
 		return nil, nil, err
 	}
-	key := crypto.DeriveKey(enc.Passphrase, salt)
 	return &encryptionInfo{
 		Algorithm: "AES-256-GCM",
 		KDF:       "Argon2id",
 		Salt:      salt,
-	}, key, nil
+	}, crypto.DeriveKey(enc.Passphrase, salt), nil
+}
+
+// planKey derives the encryption key for a snapshot from the plan's
+// passphrase and the salt recorded in the snapshot manifest.
+func planKey(plan *config.Plan, salt []byte) ([]byte, error) {
+	if len(salt) == 0 {
+		return nil, nil
+	}
+	if plan.Encryption == nil || plan.Encryption.Passphrase == "" {
+		return nil, fmt.Errorf("snapshot is encrypted but plan %q has no encryption.passphrase", plan.Name)
+	}
+	return crypto.DeriveKey(plan.Encryption.Passphrase, salt), nil
 }
 
 type sourceEntry struct {

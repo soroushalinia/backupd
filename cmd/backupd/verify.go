@@ -47,7 +47,7 @@ func newVerifyCmd() *cobra.Command {
 				snapshotID = args[1]
 			}
 
-			if err := eng.Verify(cmd.Context(), planName, snapshotID, dest); err != nil {
+			if err := eng.Verify(cmd.Context(), *plan, snapshotID, dest); err != nil {
 				return fmt.Errorf("verification failed: %w", err)
 			}
 			fmt.Println("verification passed")

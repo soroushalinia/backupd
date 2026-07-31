@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -13,6 +14,7 @@ import (
 	"strings"
 
 	"github.com/google/uuid"
+	"github.com/soroushalinia/backupd/internal/crypto"
 	"github.com/soroushalinia/backupd/internal/delta"
 	"github.com/soroushalinia/backupd/internal/storage"
 )
@@ -28,11 +30,16 @@ func formatBytes(b int64) string {
 	}
 }
 
+type blockRef struct {
+	ID   string `json:"id"`
+	Hash string `json:"hash"`
+}
+
 type fileBlockRef struct {
 	Path     string      `json:"path"`
 	Size     int64       `json:"size"`
 	Mode     os.FileMode `json:"mode"`
-	BlockIDs []string    `json:"block_ids"`
+	Blocks   []blockRef  `json:"blocks"`
 	FileHash string      `json:"file_hash"`
 }
 
@@ -40,13 +47,61 @@ type fileManifest struct {
 	Files []fileBlockRef `json:"files"`
 }
 
-func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string) (int64, *fileManifest, error) {
+// previousManifest loads the most recent snapshot manifest for a plan, used to
+// skip unchanged files during the next backup.
+func (e *Engine) previousManifest(ctx context.Context, dest storage.Storage, planName string) (*fileManifest, error) {
+	snapshots, err := e.store.ListSnapshots(planName)
+	if err != nil {
+		return nil, err
+	}
+	if len(snapshots) == 0 {
+		return nil, nil
+	}
+
+	manifestKey := fmt.Sprintf("%s/snapshots/%s/manifest.json", planName, snapshots[len(snapshots)-1].ID)
+	r, err := dest.Download(ctx, manifestKey)
+	if err != nil {
+		return nil, err
+	}
+	if r == nil {
+		return nil, nil
+	}
+	defer r.Close()
+
+	var manifest struct {
+		Sources []sourceEntry `json:"sources"`
+	}
+	if err := json.NewDecoder(r).Decode(&manifest); err != nil {
+		return nil, err
+	}
+
+	merged := &fileManifest{}
+	for _, src := range manifest.Sources {
+		if src.Type == "file" {
+			merged.Files = append(merged.Files, src.Files...)
+		}
+	}
+	return merged, nil
+}
+
+func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string, encKey []byte) (int64, *fileManifest, error) {
 	var total int64
 	manifest := &fileManifest{}
 
+	prev, err := e.previousManifest(ctx, dest, planName)
+	if err != nil {
+		return 0, nil, fmt.Errorf("loading previous manifest: %w", err)
+	}
+	prevFiles := make(map[string]*fileBlockRef)
+	if prev != nil {
+		for i := range prev.Files {
+			prevFiles[prev.Files[i].Path] = &prev.Files[i]
+		}
+	}
+
 	log.Printf("  scanning files in %s ...", sourceRoot)
 
-	err := filepath.Walk(sourceRoot, func(path string, fi os.FileInfo, err error) error {
+	err = filepath.Walk(sourceRoot, func(path string, fi os.FileInfo, err error) error {
 		if err != nil {
 			return err
 		}
@@ -71,8 +126,6 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 		fileHash := sha256.Sum256(data)
 		fileHashStr := hex.EncodeToString(fileHash[:])
 
-		sigKey := fmt.Sprintf("%s/signatures/%x", planName, sha256.Sum256([]byte(rel)))
-
 		ref := fileBlockRef{
 			Path:     rel,
 			Size:     fi.Size(),
@@ -80,69 +133,63 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 			FileHash: fileHashStr,
 		}
 
-		var prevSig *delta.Signature
-		r, err := dest.Download(ctx, sigKey)
-		if err == nil && r != nil {
-			sigData, _ := io.ReadAll(r)
-			r.Close()
-			if len(sigData) > 0 {
-				prevSig, _ = delta.UnmarshalSignature(sigData)
+		// Unchanged file: reuse the block references from the previous
+		// manifest without hashing, re-encrypting, or checking the storage.
+		if prevRef, ok := prevFiles[rel]; ok && prevRef.FileHash == fileHashStr {
+			ref.Blocks = prevRef.Blocks
+			manifest.Files = append(manifest.Files, ref)
+			return nil
+		}
+
+		knownBlocks := make(map[string]bool)
+		if prevRef, ok := prevFiles[rel]; ok {
+			for _, b := range prevRef.Blocks {
+				knownBlocks[b.ID] = true
 			}
 		}
 
-		if prevSig != nil {
-			ops, err := delta.DiffBytes(prevSig, data)
-			if err != nil {
-				return fmt.Errorf("diffing %s: %w", rel, err)
+		sig := delta.SignBytes(data, delta.DefaultBlockSize)
+		for i, b := range sig.Blocks {
+			start := i * delta.DefaultBlockSize
+			end := start + delta.DefaultBlockSize
+			if end > len(data) {
+				end = len(data)
+			}
+			block := data[start:end]
+
+			plainHash := b.Strong
+			blockID := hex.EncodeToString(plainHash[:])
+			stored := block
+
+			if encKey != nil {
+				enc, err := crypto.EncryptBlock(encKey, block)
+				if err != nil {
+					return fmt.Errorf("encrypting block of %s: %w", rel, err)
+				}
+				stored = enc
+				idHash := sha256.Sum256(enc)
+				blockID = hex.EncodeToString(idHash[:])
 			}
 
-			for _, op := range ops {
-				if op.Copy {
-					if op.Index < len(prevSig.Blocks) {
-						strong := prevSig.Blocks[op.Index].Strong
-						ref.BlockIDs = append(ref.BlockIDs, hex.EncodeToString(strong[:]))
-					}
-				} else {
-					blockID := sha256.Sum256(op.Data)
-					blockKey := fmt.Sprintf("%s/blocks/%x", planName, blockID)
-					exists, _ := dest.Exists(ctx, blockKey)
-					if !exists {
-						if err := dest.Upload(ctx, blockKey, bytes.NewReader(op.Data)); err != nil {
-							return fmt.Errorf("uploading block: %w", err)
-						}
-						total += int64(len(op.Data))
-					}
-					ref.BlockIDs = append(ref.BlockIDs, hex.EncodeToString(blockID[:]))
-				}
+			ref.Blocks = append(ref.Blocks, blockRef{ID: blockID, Hash: hex.EncodeToString(plainHash[:])})
+
+			if knownBlocks[blockID] {
+				continue
 			}
-		} else {
-			sig := delta.SignBytes(data, delta.DefaultBlockSize)
-			for i, b := range sig.Blocks {
-				blockID := hex.EncodeToString(b.Strong[:])
-				blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
-				exists, _ := dest.Exists(ctx, blockKey)
-				if !exists {
-					start := i * delta.DefaultBlockSize
-					end := start + delta.DefaultBlockSize
-					if end > len(data) {
-						end = len(data)
-					}
-					if err := dest.Upload(ctx, blockKey, bytes.NewReader(data[start:end])); err != nil {
-						return fmt.Errorf("uploading block: %w", err)
-					}
-					total += int64(end - start)
+			blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
+			exists, err := dest.Exists(ctx, blockKey)
+			if err != nil {
+				return fmt.Errorf("checking block %s: %w", blockID, err)
+			}
+			if !exists {
+				if err := dest.Upload(ctx, blockKey, bytes.NewReader(stored)); err != nil {
+					return fmt.Errorf("uploading block: %w", err)
 				}
-				ref.BlockIDs = append(ref.BlockIDs, blockID)
+				total += int64(len(stored))
 			}
 		}
 
 		manifest.Files = append(manifest.Files, ref)
-
-		newSig := delta.SignBytes(data, delta.DefaultBlockSize)
-		if err := dest.Upload(ctx, sigKey, bytes.NewReader(delta.MarshalSignature(newSig))); err != nil {
-			return fmt.Errorf("uploading signature: %w", err)
-		}
-
 		return nil
 	})
 
@@ -154,30 +201,63 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 	return total, manifest, nil
 }
 
-func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest) error {
+func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte) error {
 	for _, ref := range manifest.Files {
-		var fileData bytes.Buffer
-		for _, blockID := range ref.BlockIDs {
-			blockKey := fmt.Sprintf("%s/blocks/%s", planName, blockID)
-			r, err := dest.Download(ctx, blockKey)
-			if err != nil {
-				return fmt.Errorf("downloading block %s: %w", blockID, err)
-			}
-			if r == nil {
-				return fmt.Errorf("block %s not found", blockID)
-			}
-			_, err = io.Copy(&fileData, r)
-			r.Close()
-			if err != nil {
-				return err
-			}
-		}
-
 		outPath := filepath.Join(target, ref.Path)
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return err
 		}
-		if err := os.WriteFile(outPath, fileData.Bytes(), ref.Mode); err != nil {
+
+		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, ref.Mode)
+		if err != nil {
+			return err
+		}
+
+		for _, block := range ref.Blocks {
+			blockKey := fmt.Sprintf("%s/blocks/%s", planName, block.ID)
+			r, err := dest.Download(ctx, blockKey)
+			if err != nil {
+				f.Close()
+				return fmt.Errorf("downloading block %s: %w", block.ID, err)
+			}
+			if r == nil {
+				f.Close()
+				return fmt.Errorf("block %s not found", block.ID)
+			}
+
+			blockData, err := io.ReadAll(r)
+			r.Close()
+			if err != nil {
+				f.Close()
+				return err
+			}
+
+			plain := blockData
+			if encKey != nil {
+				plainHash, err := hex.DecodeString(block.Hash)
+				if err != nil {
+					f.Close()
+					return fmt.Errorf("invalid block hash: %w", err)
+				}
+				plain, err = crypto.DecryptBlock(encKey, plainHash, blockData)
+				if err != nil {
+					f.Close()
+					return fmt.Errorf("decrypting block %s: %w", block.ID, err)
+				}
+				computed := sha256.Sum256(plain)
+				if !bytes.Equal(computed[:], plainHash) {
+					f.Close()
+					return fmt.Errorf("block %s: hash mismatch (corrupt)", block.ID)
+				}
+			}
+
+			if _, err := f.Write(plain); err != nil {
+				f.Close()
+				return err
+			}
+		}
+
+		if err := f.Close(); err != nil {
 			return err
 		}
 	}

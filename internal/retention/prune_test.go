@@ -121,7 +121,7 @@ func TestPruneOrphanBlocks(t *testing.T) {
 	now := time.Now().UTC()
 
 	// snapshot a with block references
-	manifestA := `{"sources":[{"files":[{"block_ids":["block1","block2"]}]}]}`
+	manifestA := `{"sources":[{"files":[{"blocks":[{"id":"block1"},{"id":"block2"}]}]}]}`
 	manifestKeyA := plan + "/snapshots/a/manifest.json"
 	dest.objects[manifestKeyA] = []byte(manifestA)
 

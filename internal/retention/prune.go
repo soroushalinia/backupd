@@ -137,7 +137,9 @@ func (p *Pruner) collectBlocks(ctx context.Context, dest storage.Storage, plan, 
 	var manifest struct {
 		Sources []struct {
 			Files []struct {
-				BlockIDs []string `json:"block_ids"`
+				Blocks []struct {
+					ID string `json:"id"`
+				} `json:"blocks"`
 			} `json:"files"`
 		} `json:"sources"`
 	}
@@ -149,7 +151,9 @@ func (p *Pruner) collectBlocks(ctx context.Context, dest storage.Storage, plan, 
 	var blocks []string
 	for _, src := range manifest.Sources {
 		for _, f := range src.Files {
-			blocks = append(blocks, f.BlockIDs...)
+			for _, b := range f.Blocks {
+				blocks = append(blocks, b.ID)
+			}
 		}
 	}
 	return blocks, nil

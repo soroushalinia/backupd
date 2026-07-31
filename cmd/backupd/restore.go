@@ -44,7 +44,7 @@ func newRestoreCmd() *cobra.Command {
 			}
 
 			eng := engine.New(store)
-			if err := eng.Restore(cmd.Context(), planName, snapshotID, target, dest); err != nil {
+			if err := eng.Restore(cmd.Context(), *plan, snapshotID, target, dest); err != nil {
 				return fmt.Errorf("restore failed: %w", err)
 			}
 

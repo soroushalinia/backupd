@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/soroushalinia/backupd/internal/config"
@@ -132,7 +133,7 @@ func TestEngineRunThenRestore(t *testing.T) {
 	}
 
 	dst := t.TempDir()
-	if err := eng.Restore(context.Background(), "restore-test", result.SnapshotID, dst, st); err != nil {
+	if err := eng.Restore(context.Background(), plan, result.SnapshotID, dst, st); err != nil {
 		t.Fatal(err)
 	}
 
@@ -142,6 +143,122 @@ func TestEngineRunThenRestore(t *testing.T) {
 	}
 	if string(b) != "backup me" {
 		t.Errorf("restored content = %q, want %q", string(b), "backup me")
+	}
+}
+
+func TestEngineRunEncryptedRoundTrip(t *testing.T) {
+	src := t.TempDir()
+	content := []byte("encrypted backup me " + string(bytes.Repeat([]byte("x"), 100000)))
+	if err := os.WriteFile(filepath.Join(src, "data.bin"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(src, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "enc-test",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+		Encryption: &config.Encryption{Passphrase: "correct horse battery staple"},
+	}
+
+	result, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for key := range st.data {
+		if !strings.HasPrefix(key, "enc-test/blocks/") {
+			continue
+		}
+		if bytes.Contains(st.data[key], content) {
+			t.Errorf("block %s stored plaintext", key)
+		}
+	}
+
+	dst := t.TempDir()
+	if err := eng.Restore(context.Background(), plan, result.SnapshotID, dst, st); err != nil {
+		t.Fatal(err)
+	}
+
+	got, err := os.ReadFile(filepath.Join(dst, "data.bin"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Errorf("restored content mismatch: got %d bytes, want %d", len(got), len(content))
+	}
+}
+
+func TestEngineRunIncremental(t *testing.T) {
+	src := t.TempDir()
+	content := []byte(strings.Repeat("abc123", 10000))
+	if err := os.WriteFile(filepath.Join(src, "data.txt"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(src, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "inc-test",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+	}
+
+	first, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	blocksAfterFirst := 0
+	for key := range st.data {
+		if strings.HasPrefix(key, "inc-test/blocks/") {
+			blocksAfterFirst++
+		}
+	}
+
+	second, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	if second.SnapshotID == first.SnapshotID {
+		t.Fatal("expected different snapshot IDs")
+	}
+
+	blocksAfterSecond := 0
+	for key := range st.data {
+		if strings.HasPrefix(key, "inc-test/blocks/") {
+			blocksAfterSecond++
+		}
+	}
+	if blocksAfterSecond != blocksAfterFirst {
+		t.Errorf("unchanged file re-uploaded blocks: before=%d after=%d", blocksAfterFirst, blocksAfterSecond)
+	}
+	if second.Size != 0 {
+		t.Errorf("expected zero uploaded bytes for unchanged file, got %d", second.Size)
 	}
 }
 
