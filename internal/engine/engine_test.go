@@ -557,10 +557,17 @@ func TestIsExcluded(t *testing.T) {
 		{"nested glob", "var/www/app.log", []string{"*.log"}, true},
 		{"deep nested glob", "a/b/c/debug.log", []string{"*.log"}, true},
 		{"non-match glob", "var/www/index.html", []string{"*.log"}, false},
-		{"dir substring", "var/www/cache/data.bin", []string{"cache/"}, true},
+		{"dir pattern", "var/www/cache/data.bin", []string{"cache/"}, true},
 		{"prefix dir", "cache/data.bin", []string{"cache/"}, true},
 		{"full path glob", "tmp/scratch", []string{"tmp/*"}, true},
 		{"no exclude", "var/www/index.html", nil, false},
+		{"doublestar any depth", "var/www/sub/deep/app.log", []string{"**/*.log"}, true},
+		{"doublestar dir tree", "var/www/sub/cache/data.bin", []string{"**/cache/**"}, true},
+		{"brace alternation", "var/www/report.csv", []string{"*.{log,csv}"}, true},
+		{"brace non-match", "var/www/report.txt", []string{"*.{log,csv}"}, false},
+		{"question mark", "var/www/app1.log", []string{"app?.log"}, true},
+		{"question mark non-match", "var/www/app12.log", []string{"app?.log"}, false},
+		{"substring is not a match", "var/www/cachedir/data.bin", []string{"cache"}, false},
 	}
 	for _, tc := range cases {
 		if got := isExcluded(tc.rel, tc.exclude); got != tc.want {

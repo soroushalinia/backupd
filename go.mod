@@ -3,6 +3,7 @@ module github.com/soroushalinia/backupd
 go 1.23.0
 
 require (
+	github.com/bmatcuk/doublestar/v4 v4.10.0
 	github.com/google/uuid v1.6.0
 	github.com/minio/minio-go/v7 v7.0.84
 	github.com/mitchellh/mapstructure v1.5.0

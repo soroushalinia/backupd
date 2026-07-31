@@ -14,6 +14,7 @@ import (
 	"strings"
 	"syscall"
 
+	"github.com/bmatcuk/doublestar/v4"
 	"github.com/google/uuid"
 	"github.com/soroushalinia/backupd/internal/crypto"
 	"github.com/soroushalinia/backupd/internal/delta"
@@ -557,21 +558,27 @@ func safeJoin(base, rel string) (string, error) {
 	return joined, nil
 }
 
-// isExcluded reports whether rel should be skipped. Patterns are matched
-// against the full relative path, the file basename (so "*.log" matches
-// nested files), and as a plain substring (so "cache" or "cache/" matches
-// any directory segment). Trailing slashes are ignored so a pattern like
-// "cache/" also matches the directory entry "cache" itself.
+// isExcluded reports whether rel should be skipped. Patterns are doublestar
+// globs (gitignore-style: `**`, `{a,b}`, `?`) matched against the full
+// relative path, the file basename (so `*.log` matches nested files), and
+// the relative path prefixed with `**/` (so a bare `cache` or `cache/`
+// matches any path segment). Trailing slashes are ignored so a pattern like
+// `cache/` also matches the directory entry `cache` itself.
 func isExcluded(rel string, exclude []string) bool {
 	for _, ex := range exclude {
 		ex = strings.TrimSuffix(ex, "/")
-		if matched, _ := filepath.Match(ex, rel); matched {
+		if matched, _ := doublestar.Match(ex, rel); matched {
 			return true
 		}
-		if matched, _ := filepath.Match(ex, filepath.Base(rel)); matched {
+		if matched, _ := doublestar.Match(ex, filepath.Base(rel)); matched {
 			return true
 		}
-		if strings.Contains(rel, ex) {
+		if matched, _ := doublestar.Match("**/"+ex, rel); matched {
+			return true
+		}
+		// A directory pattern also excludes everything beneath the
+		// directory, as a backstop to the walker's SkipDir.
+		if matched, _ := doublestar.Match("**/"+ex+"/**", rel); matched {
 			return true
 		}
 	}

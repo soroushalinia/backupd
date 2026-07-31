@@ -15,7 +15,7 @@ A plan can have any number of sources. Each source is one of four types: `file`,
 |-----------|----------|----------|-------------|
 | `type`    | string   | yes      | `file`      |
 | `path`    | string   | yes      | Root directory to back up |
-| `exclude` | list     | no       | Glob patterns to skip |
+| `exclude` | list     | no       | [Doublestar globs](#exclude-patterns) to skip |
 
 Files are backed up with the [delta algorithm](#delta-algorithm).
 
@@ -29,6 +29,17 @@ Hardlinks are detected during the walk and stored once: the first path seen for 
 the canonical entry that carries the blocks, and every other path records a hardlink reference
 (which uploads nothing). Restore recreates the links as real hardlinks, so the link relationship
 survives a restore.
+
+## Exclude patterns
+
+`exclude` entries are [doublestar globs](https://github.com/bmatcuk/doublestar) -
+gitignore-style patterns with `**` for any depth, `*` for a single path segment, `?` for a single
+character, and `{a,b}` alternation. Each pattern is matched against the full relative path, the
+file basename (so `*.log` matches nested log files), and any path segment (so `cache` or `cache/`
+excludes every directory named `cache` and its contents). Trailing slashes are ignored.
+
+Patterns match literally - `cache` does not match `cachedir`, and there is no implicit
+substring matching.
 
 ## Database
 
