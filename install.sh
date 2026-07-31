@@ -1,18 +1,18 @@
 #!/bin/sh
 # backupd installer - fetches the latest release from GitHub and installs
-# the binary, verifying the SHA-256 checksum against the published
-# checksums.txt. POSIX sh only; requires curl and tar.
+# the binary into ~/.local/bin (like rustup's ~/.cargo/bin), verifying the
+# SHA-256 checksum against the published checksums.txt. POSIX sh only;
+# requires curl and tar. No root or sudo is ever needed.
 #
 # Usage:
 #   curl -fsSL https://raw.githubusercontent.com/soroushalinia/backupd/main/install.sh | sh
 #
 # Environment:
-#   PREFIX   install directory (default /usr/local/bin; sudo is used when
-#            the directory is not writable)
+#   PREFIX   install directory (default ~/.local/bin)
 #   VERSION  release tag to install, e.g. v0.2.0 (default: latest)
 set -eu
 
-PREFIX="${PREFIX:-/usr/local/bin}"
+PREFIX="${PREFIX:-$HOME/.local/bin}"
 VERSION="${VERSION:-latest}"
 
 say() { printf '%s\n' "$*"; }
@@ -68,13 +68,13 @@ fi
 tar -xzf "$TMP/$TARBALL" -C "$TMP" || die "extracting $TARBALL"
 
 mkdir -p "$PREFIX" || die "cannot create $PREFIX"
-if [ -w "$PREFIX" ]; then
-	cp "$TMP/backupd" "$PREFIX/backupd"
-else
-	command -v sudo >/dev/null 2>&1 || die "$PREFIX is not writable and sudo is unavailable"
-	sudo cp "$TMP/backupd" "$PREFIX/backupd"
-fi
+cp "$TMP/backupd" "$PREFIX/backupd"
 chmod +x "$PREFIX/backupd"
 
 say "installed: $PREFIX/backupd"
 "$PREFIX/backupd" --version
+
+case ":$PATH:" in
+	*":$PREFIX:"*) ;;
+	*) say "note: $PREFIX is not on your PATH - add it, e.g. export PATH=\"$PREFIX:\$PATH\"" ;;
+esac
