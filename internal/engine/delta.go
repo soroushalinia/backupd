@@ -188,8 +188,6 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 			inodes[id] = rel
 		}
 
-		log.Printf("  delta file: %s (%s)", rel, formatBytes(fi.Size()))
-
 		prevRef, hadPrev := prevFiles[rel]
 
 		// Pass 1: stream the file once to compute its hash without
@@ -205,8 +203,11 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 		if hadPrev && prevRef.FileHash == ref.FileHash {
 			ref.Blocks = prevRef.Blocks
 			manifest.Files = append(manifest.Files, ref)
+			log.Printf("  unchanged: %s", rel)
 			return nil
 		}
+
+		log.Printf("  changed: %s (%s)", rel, formatBytes(fi.Size()))
 
 		knownBlocks := make(map[string]bool)
 		if hadPrev {
@@ -217,10 +218,13 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 
 		// Pass 2: stream again, processing each block (hash, encrypt,
 		// upload if new). The second read typically hits the page cache.
+		before := total
 		err = processFileBlocks(ctx, dest, planName, path, &ref, knownBlocks, encKey, limiter, &total)
 		if err != nil {
 			return err
 		}
+
+		log.Printf("  uploaded %s for %s (%d blocks)", formatBytes(total-before), rel, len(ref.Blocks))
 
 		manifest.Files = append(manifest.Files, ref)
 		return nil

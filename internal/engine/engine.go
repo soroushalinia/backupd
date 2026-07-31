@@ -60,6 +60,9 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 	if err != nil {
 		return nil, err
 	}
+	if limiter != nil {
+		log.Printf("  rate limit: %s (uploads and restores are throttled)", plan.RateLimit)
+	}
 
 	snapID := newSnapshotID()
 
