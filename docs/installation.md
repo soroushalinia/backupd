@@ -6,23 +6,16 @@
 curl -fsSL https://raw.githubusercontent.com/soroushalinia/backupd/main/install.sh | sh
 ```
 
-Downloads the latest release binary for your OS and architecture, verifies its SHA-256 against
-the published `checksums.txt`, and installs it to `~/.local/bin` - no root or sudo needed. Only
-`curl` and `tar` are required.
-
 | Environment | Description |
 |-------------|-------------|
 | `PREFIX`    | Install directory (default `~/.local/bin`) |
-| `VERSION`   | Release tag to install, e.g. `v0.2.0` (default: latest) |
+| `VERSION`   | Release tag to install (default: latest) |
+
+### Pinning a version
 
 ```shell
-curl -fsSL https://raw.githubusercontent.com/soroushalinia/backupd/main/install.sh | PREFIX=/usr/local/bin sh
 curl -fsSL https://raw.githubusercontent.com/soroushalinia/backupd/main/install.sh | VERSION=v0.2.0 sh
 ```
-
-If `~/.local/bin` is not on your `PATH`, the installer prints the line to add to your shell
-profile. Piping a script into a shell runs whatever the script contains - inspect
-[install.sh](https://github.com/soroushalinia/backupd/blob/main/install.sh) first if you prefer.
 
 ## Prebuilt binaries
 

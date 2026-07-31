@@ -20,7 +20,6 @@ Changelog: [CHANGELOG.md](CHANGELOG.md)
 curl -fsSL https://raw.githubusercontent.com/soroushalinia/backupd/main/install.sh | sh
 ```
 
-Installs the latest release to `~/.local/bin` (override with `PREFIX`, pin with `VERSION`).
 See the [installation guide](https://soroushalinia.github.io/backupd/installation/).
 
 ## Features
