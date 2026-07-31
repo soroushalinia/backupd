@@ -76,6 +76,10 @@ func (e *Engine) verifyOne(ctx context.Context, plan config.Plan, snapshotID str
 	for _, src := range manifest.Sources {
 		if src.Type == "file" {
 			for _, f := range src.Files {
+				// Hardlink entries share the canonical entry's blocks.
+				if f.HardlinkOf != "" {
+					continue
+				}
 				if err := verifyFileBlocks(ctx, dest, plan.Name, f.Path, f.Blocks, encKey, limiter); err != nil {
 					return err
 				}

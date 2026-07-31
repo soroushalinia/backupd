@@ -12,6 +12,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"syscall"
 
 	"github.com/google/uuid"
 	"github.com/soroushalinia/backupd/internal/crypto"
@@ -41,6 +42,7 @@ type fileBlockRef struct {
 	Size       int64       `json:"size"`
 	Mode       os.FileMode `json:"mode"`
 	LinkTarget string      `json:"link_target,omitempty"`
+	HardlinkOf string      `json:"hardlink_of,omitempty"`
 	Blocks     []blockRef  `json:"blocks"`
 	FileHash   string      `json:"file_hash"`
 }
@@ -113,6 +115,11 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 		}
 	}
 
+	// Hardlink detection: the first path seen for an (dev, inode) pair is
+	// the canonical one that carries the blocks; later paths record
+	// HardlinkOf instead and upload nothing.
+	inodes := make(map[string]string)
+
 	log.Printf("  scanning files in %s ...", sourceRoot)
 
 	err = filepath.Walk(sourceRoot, func(path string, fi os.FileInfo, err error) error {
@@ -169,6 +176,17 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 			return nil
 		}
 
+		// Another path to an inode we already recorded: store the link
+		// reference only - the canonical entry carries the blocks.
+		if id, ok := fileID(fi); ok {
+			if canonical, seen := inodes[id]; seen {
+				ref.HardlinkOf = canonical
+				manifest.Files = append(manifest.Files, ref)
+				return nil
+			}
+			inodes[id] = rel
+		}
+
 		log.Printf("  delta file: %s (%s)", rel, formatBytes(fi.Size()))
 
 		prevRef, hadPrev := prevFiles[rel]
@@ -213,6 +231,17 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 
 	log.Printf("  delta complete: %d files, %s new/changed blocks", len(manifest.Files), formatBytes(total))
 	return total, manifest, nil
+}
+
+// fileID returns a stable identifier for a file's inode, used to detect
+// hardlinks during the walk. Stat_t.Dev and Stat_t.Ino exist on every
+// supported platform (linux, darwin, freebsd).
+func fileID(fi os.FileInfo) (string, bool) {
+	st, ok := fi.Sys().(*syscall.Stat_t)
+	if !ok || st == nil {
+		return "", false
+	}
+	return fmt.Sprintf("%d:%d", st.Dev, st.Ino), true
 }
 
 // hashFile streams a file through sha256, returning the digest. Memory use is
@@ -438,9 +467,10 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 
 	// Pass 2: write regular files. This must happen before symlinks are
 	// created so a malicious manifest cannot redirect writes through a
-	// restored symlink out of the target directory.
+	// restored symlink out of the target directory. Hardlink entries
+	// carry no blocks; they are recreated in pass 4.
 	for _, ref := range manifest.Files {
-		if ref.Mode&os.ModeDir != 0 || ref.Mode&os.ModeSymlink != 0 {
+		if ref.Mode&os.ModeDir != 0 || ref.Mode&os.ModeSymlink != 0 || ref.HardlinkOf != "" {
 			continue
 		}
 		outPath, err := safeJoin(target, ref.Path)
@@ -488,6 +518,29 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 		}
 		if err := os.Symlink(ref.LinkTarget, outPath); err != nil {
 			return fmt.Errorf("creating symlink %q: %w", ref.Path, err)
+		}
+	}
+
+	// Pass 4: recreate hardlinks. The canonical entry (HardlinkOf) was
+	// written in pass 2; both paths are validated to stay inside the
+	// target directory.
+	for _, ref := range manifest.Files {
+		if ref.HardlinkOf == "" {
+			continue
+		}
+		outPath, err := safeJoin(target, ref.Path)
+		if err != nil {
+			return fmt.Errorf("hardlink %q: %w", ref.Path, err)
+		}
+		linkTarget, err := safeJoin(target, ref.HardlinkOf)
+		if err != nil {
+			return fmt.Errorf("hardlink %q -> %q: %w", ref.Path, ref.HardlinkOf, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			return err
+		}
+		if err := os.Link(linkTarget, outPath); err != nil {
+			return fmt.Errorf("creating hardlink %q: %w", ref.Path, err)
 		}
 	}
 	return nil

@@ -25,6 +25,11 @@ never pull content from outside the source root. During restore, directories are
 then regular files, then symlinks, so nothing is ever written through a restored symlink. Special
 files (fifos, sockets, devices) are skipped with a warning.
 
+Hardlinks are detected during the walk and stored once: the first path seen for an inode becomes
+the canonical entry that carries the blocks, and every other path records a hardlink reference
+(which uploads nothing). Restore recreates the links as real hardlinks, so the link relationship
+survives a restore.
+
 ## Database
 
 ```yaml

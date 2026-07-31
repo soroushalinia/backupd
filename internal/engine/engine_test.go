@@ -854,6 +854,99 @@ func TestRunWithoutRetentionGCsOrphans(t *testing.T) {
 	}
 }
 
+func TestEngineFileSourceHardlinks(t *testing.T) {
+	src := t.TempDir()
+	content := []byte("hardlinked content")
+	if err := os.WriteFile(filepath.Join(src, "a.txt"), content, 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(src, "a.txt"), filepath.Join(src, "b.txt")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(src, "sub"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Link(filepath.Join(src, "a.txt"), filepath.Join(src, "sub", "c.txt")); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "hardlinks-plan",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+	}
+
+	first, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	// An unchanged tree (hardlinks included) uploads nothing.
+	second, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if second.Size != 0 {
+		t.Errorf("expected zero upload for unchanged hardlinked tree, got %d", second.Size)
+	}
+
+	// All snapshots verify.
+	for _, id := range []string{first.SnapshotID, second.SnapshotID} {
+		if err := eng.Verify(context.Background(), plan, id, st); err != nil {
+			t.Errorf("verify snapshot %s: %v", id, err)
+		}
+	}
+
+	// Restore recreates the hardlinks as real links to the canonical file.
+	target := filepath.Join(t.TempDir(), "restore")
+	if err := eng.Restore(context.Background(), plan, first.SnapshotID, target, st); err != nil {
+		t.Fatal(err)
+	}
+	canonical := filepath.Join(target, "a.txt")
+	got, err := os.ReadFile(canonical)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !bytes.Equal(got, content) {
+		t.Fatal("canonical file content mismatch")
+	}
+	for _, link := range []string{"b.txt", "sub/c.txt"} {
+		p := filepath.Join(target, link)
+		fi, err := os.Stat(p)
+		if err != nil {
+			t.Errorf("hardlink %s not restored: %v", link, err)
+			continue
+		}
+		cfi, err := os.Stat(canonical)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !os.SameFile(fi, cfi) {
+			t.Errorf("%s is not a hardlink to a.txt", link)
+		}
+		got, err := os.ReadFile(p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if !bytes.Equal(got, content) {
+			t.Errorf("%s content mismatch", link)
+		}
+	}
+}
+
 func TestEngineRunNoSources(t *testing.T) {
 	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
