@@ -4,7 +4,7 @@
 backupd [--config <path>] <command>
 ```
 
-Global flag: `--config` — path to config file (default `~/.backupd.yaml`).
+Global flag: `--config` / `-c` — path to config file (default `~/.backupd.yaml`).
 
 ## Commands
 
@@ -21,13 +21,25 @@ Global flag: `--config` — path to config file (default `~/.backupd.yaml`).
 | `completion <shell>` | Generate shell completion (`bash`, `zsh`, `fish`) |
 | `help` | Show help |
 
+## export-systemd
+
+```shell
+backupd export-systemd server -o /etc/systemd/system
+```
+
+| Flag      | Shorthand | Description |
+|-----------|-----------|-------------|
+| `--output`| `-o`      | Output directory for the generated unit files (default: current directory) |
+| `--binary`|           | Path to the backupd binary used in the service unit (default: resolved from `os.Executable()`) |
+| `--config`|           | Path to config file (overrides the global flag for unit generation) |
+
 ## restore
 
 ```shell
 backupd restore server <snapshot-id> --target /tmp/restore
 ```
 
-- `--target` — directory to restore into (defaults to the current directory)
+- `--target` / `-t` — directory to restore into (defaults to the current directory)
 - File sources are reconstructed block-by-block from the manifest; other sources are written as
   their stored archive (`.sql`, `.tar`).
 

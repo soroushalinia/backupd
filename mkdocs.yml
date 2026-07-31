@@ -28,20 +28,32 @@ markdown_extensions:
   - admonition
   - toc:
       permalink: true
-  - pymdownx.superfences
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
   - pymdownx.highlight
   - pymdownx.inlinehilite
   - pymdownx.tabbed
   - pymdownx.details
 
+extra_javascript:
+  - https://unpkg.com/mermaid@11/dist/mermaid.min.js
+
 nav:
   - Home: index.md
-  - Installation: installation.md
-  - Quick Start: quickstart.md
-  - Configuration: configuration.md
-  - Sources: sources.md
-  - Encryption: encryption.md
-  - Retention: retention.md
-  - Hooks: hooks.md
-  - Scheduling: scheduling.md
-  - CLI Reference: cli.md
+  - Getting Started:
+      - Installation: installation.md
+      - Quick Start: quickstart.md
+      - Examples: examples.md
+  - Reference:
+      - Configuration: configuration.md
+      - Sources: sources.md
+      - Restore & Verify: restore.md
+      - Encryption: encryption.md
+      - Retention: retention.md
+      - Hooks: hooks.md
+      - Scheduling: scheduling.md
+      - CLI Reference: cli.md
+  - FAQ: faq.md

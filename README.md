@@ -2,8 +2,15 @@
 
 [![Go Version](https://img.shields.io/github/go-mod/go-version/soroushalinia/backupd)](https://github.com/soroushalinia/backupd)
 [![License](https://img.shields.io/github/license/soroushalinia/backupd)](LICENSE)
+[![CI](https://github.com/soroushalinia/backupd/actions/workflows/ci.yml/badge.svg)](https://github.com/soroushalinia/backupd/actions)
+[![Docs](https://img.shields.io/badge/docs-soroushalinia.github.io%2Fbackupd-blue)](https://soroushalinia.github.io/backupd/)
+[![Release](https://img.shields.io/github/v/release/soroushalinia/backupd)](https://github.com/soroushalinia/backupd/releases)
+
+> **Status: not production ready.** Under active development — config schema and snapshot formats may change without notice.
 
 Declarative S3-compatible backup daemon. Define your backup plans in a single YAML file — sources, destination, encryption, retention, tags, and hooks — and let backupd handle the rest.
+
+Full documentation: <https://soroushalinia.github.io/backupd/>
 
 ## Features
 

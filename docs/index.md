@@ -1,44 +1,74 @@
 # backupd
 
-**backupd** is a declarative, S3-compatible backup daemon. You define backup plans in a single
-YAML file — sources, destination, encryption, retention, tags, and hooks — and backupd handles
-the rest.
+The declarative S3-compatible backup daemon for Linux
 
-## Features
+**backupd** lets you define backup plans in a single YAML file — sources, destination, encryption,
+retention, tags, and hooks — and handles the rest. Incremental by default, encrypted at rest, and
+scheduled without extra tooling.
 
-- **Declarative YAML config** with `${ENV_VAR}` interpolation
-- **S3-compatible storage** — AWS S3, MinIO, DigitalOcean Spaces, Backblaze B2
-- **Incremental backups** via an rsync-style delta algorithm that only uploads changed blocks
-- **Multiple source types** — file paths, databases (PostgreSQL, MySQL, MongoDB, SQLite), Docker
-  volumes, and Kubernetes PVCs
-- **AES-256-GCM encryption** with Argon2id key derivation
-- **Retention policies** — keep-last, daily, weekly, monthly
-- **Pre/post/on-failure command hooks** for notification and orchestration
-- **Embedded cron scheduler** and systemd timer/service export
-- **Snapshot integrity verification**
-- **Shell completion** for bash, zsh, and fish
+!!! warning "Not production ready"
+    backupd is under active development. APIs, config schema, and snapshot formats may change
+    without notice. Do not rely on it for critical backups yet.
 
-## How it works
+## Key Features
 
-```mermaid
-graph LR
-    A[YAML plan] --> B[Scheduler]
-    B --> C[Engine]
-    C --> D[Sources]
-    D --> E[Delta dedup]
-    E --> F[Encrypt]
-    F --> G[S3-compatible storage]
-    C --> H[Retention]
-    C --> I[Hooks]
+- 🚀 **Incremental by Default** — rsync-style delta algorithm uploads only changed blocks, keeping repeated backups cheap on large datasets.
+- 📦 **Zero Runtime Dependencies** — a single static Go binary; no agent, no database, no interpreter.
+- 🔐 **Encrypted at Rest** — AES-256-GCM encryption with Argon2id key derivation; nothing stored readable.
+- 🗂️ **S3-Compatible Storage** — AWS S3, MinIO, DigitalOcean Spaces, Backblaze B2, and anything with an S3 API.
+- 🧩 **Multi-Source** — file trees, PostgreSQL, MySQL, MongoDB, SQLite, Docker volumes, and Kubernetes PVCs in one plan.
+- ⏰ **Built-In Scheduling** — embedded cron daemon, or export native systemd timers and services.
+- 🧹 **Automatic Retention** — keep-last, daily, weekly, and monthly policies prune old snapshots for you.
+- 🔔 **Hooks** — pre-backup, post-backup, and on-failure commands for Healthchecks.io pings, notifications, and more.
+- ✅ **Verifiable** — snapshot integrity verification and restore from any snapshot, anytime.
+
+## When Should I Use backupd?
+
+- **Servers and VPSes** — if you need reliable backups of `/etc`, web roots, application data, or databases on a schedule, backupd replaces ad-hoc `cron` + `tar` + `scp` pipelines.
+- **Databases** — if you need consistent logical dumps of PostgreSQL, MySQL, MongoDB, or SQLite — including the database *and* its files — in one place.
+- **Container workloads** — if you run Docker volumes or Kubernetes PVCs and want their contents in the same backup stream as everything else.
+- **Offsite storage** — if you want backups in S3-compatible object storage (MinIO at home, B2/Spaces/S3 in the cloud) with encryption applied before upload.
+- **Notification and monitoring** — if you want Healthchecks.io pings, Slack/Discord alerts, or email on every success and failure via hooks.
+- **Retention discipline** — if you want keep-last + daily + weekly + monthly pruning so backups never silently accumulate unbounded.
+
+## Quick Example
+
+```yaml
+# ~/.backupd.yaml
+plans:
+  - name: server
+    schedule: "0 3 * * *"          # every day at 03:00
+    sources:
+      - type: file
+        path: /etc
+        exclude: ["*.log", ".cache"]
+      - type: database
+        adapter: postgres
+        dsn: "postgres://user:pass@localhost:5432/mydb"
+    destination:
+      type: s3
+      bucket: my-backups
+      endpoint: s3.amazonaws.com
+      region: us-east-1
+      access-key: ${AWS_ACCESS_KEY_ID}
+      secret-key: ${AWS_SECRET_ACCESS_KEY}
+    encryption:
+      passphrase: ${BACKUP_PASSPHRASE}
+    retention:
+      keep-last: 30
+      keep-daily: 7
+      keep-weekly: 4
 ```
-
-Each backup produces a snapshot — an immutable, versioned set of objects in your bucket. Restores
-pull the manifest and reconstruct files from the stored blocks.
-
-## Getting started
 
 ```shell
-go install github.com/soroushalinia/backupd/cmd/backupd@latest
+backupd run server                # first run backs everything up
+backupd history server            # watch snapshots accumulate
+backupd restore server <id> --target /tmp/restore   # restore any snapshot
 ```
 
-Check out the [Quick Start](quickstart.md) or the full [Configuration](configuration.md) reference.
+## Next Steps
+
+- [Installation](installation.md) — get the binary
+- [Quick Start](quickstart.md) — your first backup in five minutes
+- [Configuration](configuration.md) — full config reference
+- [Examples](examples.md) — real-world setups for servers, databases, and containers

@@ -32,7 +32,14 @@ Generate a timer and service for one or all plans:
 ```shell
 backupd export-systemd server
 backupd export-systemd            # all plans
+backupd export-systemd -o /etc/systemd/system --binary /usr/local/bin/backupd
 ```
+
+| Flag      | Shorthand | Description |
+|-----------|-----------|-------------|
+| `--output`| `-o`      | Directory for the unit files (default: current directory) |
+| `--binary`|           | Path to the backupd binary embedded in the service unit |
+| `--config`|           | Config path used to resolve plan schedules |
 
 Install the generated units:
 
