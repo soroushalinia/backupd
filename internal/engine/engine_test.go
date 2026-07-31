@@ -331,6 +331,29 @@ func TestUploadAndRestoreSourceRoundTrip(t *testing.T) {
 	}
 }
 
+func TestIsExcluded(t *testing.T) {
+	cases := []struct {
+		name    string
+		rel     string
+		exclude []string
+		want    bool
+	}{
+		{"top-level glob", "app.log", []string{"*.log"}, true},
+		{"nested glob", "var/www/app.log", []string{"*.log"}, true},
+		{"deep nested glob", "a/b/c/debug.log", []string{"*.log"}, true},
+		{"non-match glob", "var/www/index.html", []string{"*.log"}, false},
+		{"dir substring", "var/www/cache/data.bin", []string{"cache/"}, true},
+		{"prefix dir", "cache/data.bin", []string{"cache/"}, true},
+		{"full path glob", "tmp/scratch", []string{"tmp/*"}, true},
+		{"no exclude", "var/www/index.html", nil, false},
+	}
+	for _, tc := range cases {
+		if got := isExcluded(tc.rel, tc.exclude); got != tc.want {
+			t.Errorf("%s: isExcluded(%q, %v) = %v, want %v", tc.name, tc.rel, tc.exclude, got, tc.want)
+		}
+	}
+}
+
 func TestEngineRunNoSources(t *testing.T) {
 	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {

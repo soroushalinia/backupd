@@ -322,9 +322,16 @@ func safeJoin(base, rel string) (string, error) {
 	return joined, nil
 }
 
+// isExcluded reports whether rel should be skipped. Patterns are matched
+// against the full relative path, the file basename (so "*.log" matches
+// nested files), and as a plain substring (so "cache/" matches any
+// directory segment).
 func isExcluded(rel string, exclude []string) bool {
 	for _, ex := range exclude {
 		if matched, _ := filepath.Match(ex, rel); matched {
+			return true
+		}
+		if matched, _ := filepath.Match(ex, filepath.Base(rel)); matched {
 			return true
 		}
 		if strings.Contains(rel, ex) {
