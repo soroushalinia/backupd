@@ -102,9 +102,23 @@ func (e *Engine) Run(ctx context.Context, plan config.Plan, dest storage.Storage
 	}, nil
 }
 
-func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan config.Plan, snapID string) (int64, error) {
+func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan config.Plan, snapID string) (totalSize int64, err error) {
 	var fileManifests []*fileManifest
-	totalSize := int64(0)
+
+	// On failure, remove the objects uploaded for this snapshot so a
+	// partially written snapshot does not linger in the bucket. Blocks are
+	// content-addressed and may be shared with other snapshots, so they are
+	// left for the retention pruner's orphan cleanup.
+	var uploaded []string
+	defer func() {
+		if err != nil {
+			for _, key := range uploaded {
+				if derr := dest.Delete(ctx, key); derr != nil {
+					log.Printf("cleanup: error deleting %s: %v", key, derr)
+				}
+			}
+		}
+	}()
 
 	tags := make(map[string]string)
 	for k, v := range plan.Tags {
@@ -173,9 +187,16 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 			return 0, fmt.Errorf("uploading source %d: %w", i, err)
 		}
 		totalSize += size
+		storedKey := srcKey
+		if encKey != nil {
+			storedKey += ".enc"
+		}
+		uploaded = append(uploaded, storedKey)
 
 		if len(tags) > 0 {
-			_ = dest.SetTags(ctx, srcKey, tags)
+			if err := dest.SetTags(ctx, storedKey, tags); err != nil {
+				log.Printf("warning: tagging %s: %v", storedKey, err)
+			}
 		}
 	}
 
@@ -211,8 +232,11 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 	if err := writeSnapshotManifest(ctx, dest, manifestKey, plan.Name, snapID, totalSize, sourceEntries, plan.Tags, encInfo); err != nil {
 		return 0, fmt.Errorf("writing manifest: %w", err)
 	}
+	uploaded = append(uploaded, manifestKey)
 	if len(tags) > 0 {
-		_ = dest.SetTags(ctx, manifestKey, tags)
+		if err := dest.SetTags(ctx, manifestKey, tags); err != nil {
+			log.Printf("warning: tagging %s: %v", manifestKey, err)
+		}
 	}
 
 	return totalSize, nil

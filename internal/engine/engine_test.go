@@ -3,8 +3,10 @@ package engine
 import (
 	"bytes"
 	"context"
+	"fmt"
 	"io"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -38,7 +40,10 @@ func (s *testStorage) Download(ctx context.Context, key string) (io.ReadCloser, 
 	return io.NopCloser(bytes.NewReader(b)), nil
 }
 
-func (s *testStorage) Delete(ctx context.Context, key string) error { return nil }
+func (s *testStorage) Delete(ctx context.Context, key string) error {
+	delete(s.data, key)
+	return nil
+}
 func (s *testStorage) List(ctx context.Context, prefix string) ([]storage.ObjectInfo, error) {
 	return nil, nil
 }
@@ -350,6 +355,55 @@ func TestIsExcluded(t *testing.T) {
 	for _, tc := range cases {
 		if got := isExcluded(tc.rel, tc.exclude); got != tc.want {
 			t.Errorf("%s: isExcluded(%q, %v) = %v, want %v", tc.name, tc.rel, tc.exclude, got, tc.want)
+		}
+	}
+}
+
+type failStorage struct {
+	testStorage
+	failOn string
+}
+
+func (s *failStorage) Upload(ctx context.Context, key string, r io.Reader) error {
+	if strings.Contains(key, s.failOn) {
+		return fmt.Errorf("injected failure for %s", key)
+	}
+	return s.testStorage.Upload(ctx, key, r)
+}
+
+func TestFailedRunCleansUpUploadedSources(t *testing.T) {
+	if _, err := exec.LookPath("docker"); err != nil {
+		t.Skip("docker not available")
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	st := &failStorage{testStorage: testStorage{}, failOn: "sources/1"}
+	eng := New(store)
+
+	plan := config.Plan{
+		Name: "cleanup-test",
+		Sources: []config.Source{
+			{Type: "docker", Volume: "cleanup-test-vol-a"},
+			{Type: "docker", Volume: "cleanup-test-vol-b"},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+	}
+
+	if _, err := eng.Run(context.Background(), plan, st); err == nil {
+		t.Fatal("expected run to fail")
+	}
+
+	prefix := "cleanup-test/snapshots/"
+	for key := range st.data {
+		if strings.HasPrefix(key, prefix) {
+			t.Errorf("failed run left snapshot object %q behind", key)
 		}
 	}
 }
