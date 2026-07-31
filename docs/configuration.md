@@ -61,5 +61,7 @@ Variables are read from the process environment — ideal for keys, passphrases,
 
 ## Validation
 
-Config is validated at load time: missing required fields, unknown source types, invalid cron
-expressions, and conflicting retention policies fail fast with clear errors.
+Config is validated at load time: missing required fields, unknown source types, and missing
+destination settings fail fast with clear errors. Run `backupd check` for a deeper review — it
+also reports inaccessible file source paths, invalid cron schedules, and encryption setups
+without a passphrase.

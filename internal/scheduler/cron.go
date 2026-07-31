@@ -22,13 +22,7 @@ type Daemon struct {
 
 func NewDaemon(cfg *config.Config, store *state.Store) (*Daemon, error) {
 	d := &Daemon{
-		cron: cron.New(
-			cron.WithParser(
-				cron.NewParser(
-					cron.Descriptor | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
-				),
-			),
-		),
+		cron:   cron.New(cronParser()),
 		plans:  cfg.Plans,
 		store:  store,
 		engine: engine.New(store),
@@ -39,10 +33,7 @@ func NewDaemon(cfg *config.Config, store *state.Store) (*Daemon, error) {
 			continue
 		}
 		p := plan
-		spec := plan.Schedule
-		if !strings.HasPrefix(spec, "@") {
-			spec = "0 " + spec
-		}
+		spec := normalizeSpec(plan.Schedule)
 		_, err := d.cron.AddFunc(spec, func() {
 			if err := d.runPlan(context.Background(), p); err != nil {
 				log.Printf("scheduled backup %q failed: %v", p.Name, err)
@@ -55,6 +46,35 @@ func NewDaemon(cfg *config.Config, store *state.Store) (*Daemon, error) {
 	}
 
 	return d, nil
+}
+
+func cronParser() cron.Option {
+	return cron.WithParser(
+		cron.NewParser(
+			cron.Descriptor | cron.Minute | cron.Hour | cron.Dom | cron.Month | cron.Dow,
+		),
+	)
+}
+
+// normalizeSpec accepts both 4-field hour-level specs ("3 * * *") and
+// 5-field minute-level specs ("*/5 * * * *"); the latter are already
+// supported by the parser and must not be modified.
+func normalizeSpec(spec string) string {
+	if strings.HasPrefix(spec, "@") {
+		return spec
+	}
+	if len(strings.Fields(spec)) == 4 {
+		return "0 " + spec
+	}
+	return spec
+}
+
+// ValidateSchedule reports whether a plan's schedule is a valid cron
+// expression, so misconfigured schedules can be caught by `backupd check`.
+func ValidateSchedule(spec string) error {
+	c := cron.New(cronParser())
+	_, err := c.AddFunc(normalizeSpec(spec), func() {})
+	return err
 }
 
 func (d *Daemon) Start() {

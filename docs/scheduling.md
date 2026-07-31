@@ -16,6 +16,14 @@ schedule: "30 1 * * 1"  # every Monday at 01:30
 schedule: "*/5 * * * *" # every 5 minutes
 ```
 
+A 4-field shorthand is also accepted, omitting the minute field:
+
+```yaml
+schedule: "3 * * *"     # every day at 03:00 (same as "0 3 * * *")
+```
+
+Invalid expressions are caught when the daemon starts or by `backupd check`.
+
 ## Option 1: embedded daemon
 
 ```shell

@@ -3,8 +3,8 @@ package main
 import (
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/soroushalinia/backupd/internal/config"
+	"github.com/spf13/cobra"
 )
 
 var version = "dev"
@@ -41,6 +41,7 @@ func main() {
 	cmd.PersistentFlags().StringP("config", "c", config.DefaultConfigPath(), "path to config file")
 
 	cmd.AddCommand(newRunCmd())
+	cmd.AddCommand(newCheckCmd())
 	cmd.AddCommand(newListCmd())
 	cmd.AddCommand(newStatusCmd())
 	cmd.AddCommand(newHistoryCmd())

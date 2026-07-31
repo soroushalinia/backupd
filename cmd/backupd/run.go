@@ -3,15 +3,17 @@ package main
 import (
 	"fmt"
 
-	"github.com/spf13/cobra"
 	"github.com/soroushalinia/backupd/internal/config"
 	"github.com/soroushalinia/backupd/internal/engine"
 	"github.com/soroushalinia/backupd/internal/state"
 	"github.com/soroushalinia/backupd/internal/storage"
+	"github.com/spf13/cobra"
 )
 
 func newRunCmd() *cobra.Command {
-	return &cobra.Command{
+	var dryRun bool
+
+	cmd := &cobra.Command{
 		Use:   "run <plan-name>",
 		Short: "Execute a backup plan immediately",
 		Args:  cobra.ExactArgs(1),
@@ -42,15 +44,26 @@ func newRunCmd() *cobra.Command {
 			}
 
 			eng := engine.New(store)
-			result, err := eng.Run(cmd.Context(), *plan, dest)
+			var result *engine.RunResult
+			if dryRun {
+				result, err = eng.DryRun(cmd.Context(), *plan, dest)
+				if err == nil {
+					fmt.Printf("dry run complete: %d bytes would be uploaded (%s)\n", result.Size, result.Duration)
+				}
+			} else {
+				result, err = eng.Run(cmd.Context(), *plan, dest)
+				if err == nil {
+					fmt.Printf("snapshot %s complete (%d bytes in %s)\n", result.SnapshotID, result.Size, result.Duration)
+				}
+			}
 			if err != nil {
 				return fmt.Errorf("backup failed: %w", err)
 			}
-
-			fmt.Printf("snapshot %s complete (%d bytes in %s)\n", result.SnapshotID, result.Size, result.Duration)
 			return nil
 		},
 	}
+	cmd.Flags().BoolVar(&dryRun, "dry-run", false, "report what would be uploaded without writing anything")
+	return cmd
 }
 
 func defaultStatePath() string {

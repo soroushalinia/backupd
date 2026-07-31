@@ -464,6 +464,63 @@ func TestEngineFileSourceSymlinksAndEmptyDirs(t *testing.T) {
 	}
 }
 
+func TestEngineDryRunWritesNothing(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.txt"), []byte("hello"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "b.txt"), []byte("world"), 0644); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(dir, "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "dry-run-plan",
+		Sources: []config.Source{
+			{Type: "file", Path: dir},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+		Hooks: &config.Hooks{
+			PreBackup: []string{"touch /tmp/backupd-dryrun-hook-ran"},
+		},
+	}
+
+	result, err := eng.DryRun(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if result.Size == 0 {
+		t.Fatal("expected dry run to report a non-zero upload size")
+	}
+	if result.SnapshotID != "" {
+		t.Errorf("dry run reported snapshot ID %q, want empty", result.SnapshotID)
+	}
+
+	if len(st.data) != 0 {
+		t.Errorf("dry run wrote %d objects to storage", len(st.data))
+	}
+	snap, err := store.LastSnapshot("dry-run-plan")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snap != nil {
+		t.Errorf("dry run recorded snapshot %q in state", snap.ID)
+	}
+	if _, err := os.Stat("/tmp/backupd-dryrun-hook-ran"); err == nil {
+		t.Error("dry run executed a pre-backup hook")
+	}
+}
+
 func TestFailedRunCleansUpUploadedSources(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")

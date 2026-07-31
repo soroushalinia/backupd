@@ -36,8 +36,24 @@ type RunResult struct {
 }
 
 func (e *Engine) Run(ctx context.Context, plan config.Plan, dest storage.Storage) (*RunResult, error) {
+	return e.run(ctx, plan, dest, false)
+}
+
+// DryRun executes a backup plan without writing anything: hooks, storage
+// uploads, snapshot state, and retention pruning are all skipped. The
+// reported size is what a real run would upload.
+func (e *Engine) DryRun(ctx context.Context, plan config.Plan, dest storage.Storage) (*RunResult, error) {
+	return e.run(ctx, plan, dest, true)
+}
+
+func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage, dryRun bool) (*RunResult, error) {
 	log.Printf("starting backup for plan %q", plan.Name)
 	start := time.Now()
+
+	if dryRun {
+		log.Printf("  dry run: no data will be written")
+		dest = discardStorage{Storage: dest}
+	}
 
 	snapID := newSnapshotID()
 
@@ -47,7 +63,7 @@ func (e *Engine) Run(ctx context.Context, plan config.Plan, dest storage.Storage
 		WithEnv("BACKUPD_TIMESTAMP", time.Now().UTC().Format(time.RFC3339)).
 		WithEnv("BACKUPD_STATUS", "running")
 
-	if plan.Hooks != nil {
+	if !dryRun && plan.Hooks != nil {
 		if err := hr.RunAll(ctx, plan.Hooks.PreBackup); err != nil {
 			return nil, fmt.Errorf("pre-backup hook: %w", err)
 		}
@@ -56,7 +72,7 @@ func (e *Engine) Run(ctx context.Context, plan config.Plan, dest storage.Storage
 	totalSize, err := e.runSources(ctx, dest, plan, snapID)
 
 	if err != nil {
-		if plan.Hooks != nil {
+		if !dryRun && plan.Hooks != nil {
 			hr.WithEnv("BACKUPD_STATUS", "failure")
 			if hookErr := hr.RunAll(ctx, plan.Hooks.OnFailure); hookErr != nil {
 				log.Printf("on-failure hook error: %v", hookErr)
@@ -65,11 +81,17 @@ func (e *Engine) Run(ctx context.Context, plan config.Plan, dest storage.Storage
 		return nil, fmt.Errorf("backup failed: %w", err)
 	}
 
-	if plan.Hooks != nil {
+	if !dryRun && plan.Hooks != nil {
 		hr.WithEnv("BACKUPD_STATUS", "success")
 		if err := hr.RunAll(ctx, plan.Hooks.PostBackup); err != nil {
 			log.Printf("post-backup hook error: %v", err)
 		}
+	}
+
+	if dryRun {
+		elapsed := time.Since(start)
+		log.Printf("dry run for plan %q complete: %s would be uploaded in %s", plan.Name, formatBytes(totalSize), elapsed)
+		return &RunResult{Size: totalSize, Duration: elapsed}, nil
 	}
 
 	snap := config.Snapshot{
@@ -343,6 +365,18 @@ type sourceEntry struct {
 	Key   string         `json:"key,omitempty"`
 	Files []fileBlockRef `json:"files,omitempty"`
 }
+
+// discardStorage wraps a Storage and discards all writes, leaving reads
+// (Exists, Download, List) untouched. Used for dry runs.
+type discardStorage struct {
+	storage.Storage
+}
+
+func (discardStorage) Upload(context.Context, string, io.Reader) error { return nil }
+
+func (discardStorage) Delete(context.Context, string) error { return nil }
+
+func (discardStorage) SetTags(context.Context, string, map[string]string) error { return nil }
 
 func writeSnapshotManifest(ctx context.Context, dest storage.Storage, key, planName, snapID string, totalSize int64, sources []sourceEntry, tags map[string]string, encInfo *encryptionInfo) error {
 	type snapManifest struct {

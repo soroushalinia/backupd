@@ -48,6 +48,22 @@ func TestNewDaemon(t *testing.T) {
 	}
 }
 
+func TestValidateSchedule(t *testing.T) {
+	valid := []string{"*/5 * * * *", "0 3 * * *", "30 1 * * 1", "3 * * *", "@every 1h", "@daily"}
+	for _, spec := range valid {
+		if err := ValidateSchedule(spec); err != nil {
+			t.Errorf("ValidateSchedule(%q) = %v, want nil", spec, err)
+		}
+	}
+
+	invalid := []string{"not a cron", "0 0 *", "60 24 * * *"}
+	for _, spec := range invalid {
+		if err := ValidateSchedule(spec); err == nil {
+			t.Errorf("ValidateSchedule(%q) = nil, want error", spec)
+		}
+	}
+}
+
 func TestNewDaemonBadSchedule(t *testing.T) {
 	tmp := t.TempDir()
 	dbPath := filepath.Join(tmp, "test.db")
