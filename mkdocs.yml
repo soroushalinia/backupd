@@ -8,15 +8,15 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: yellow
-      accent: amber
+      primary: amber
+      accent: yellow
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: yellow
-      accent: amber
+      primary: amber
+      accent: yellow
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
@@ -55,16 +55,17 @@ extra_javascript:
 
 nav:
   - Home: index.md
-  - Installation: installation.md
   - Getting Started:
+      - Installation: installation.md
       - Quick Start: quickstart.md
       - Examples: examples.md
-  - Configuration: configuration.md
-  - Sources: sources.md
-  - Restore & Verify: restore.md
-  - Encryption: encryption.md
-  - Retention: retention.md
-  - Hooks: hooks.md
-  - Scheduling: scheduling.md
+  - Guide:
+      - Configuration: configuration.md
+      - Sources: sources.md
+      - Restore & Verify: restore.md
+      - Encryption: encryption.md
+      - Retention: retention.md
+      - Hooks: hooks.md
+      - Scheduling: scheduling.md
   - CLI Reference: cli.md
   - FAQ: faq.md
