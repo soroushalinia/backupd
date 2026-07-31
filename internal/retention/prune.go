@@ -43,9 +43,6 @@ func (p *Pruner) Prune(ctx context.Context, plan string, policy Policy, dest sto
 
 	log.Printf("prune %q: deleting %d snapshots", plan, len(toDelete))
 
-	usedBlocks := make(map[string]bool)
-	allBlocks := make(map[string]bool)
-
 	for _, snap := range toDelete {
 		if err := p.deleteSnapshot(ctx, dest, plan, snap.ID); err != nil {
 			log.Printf("error deleting snapshot %s from storage: %v", snap.ID, err)
@@ -56,8 +53,21 @@ func (p *Pruner) Prune(ctx context.Context, plan string, policy Policy, dest sto
 		}
 	}
 
-	keepSummaries, _ := policy.Evaluate(summaries)
-	for _, s := range keepSummaries {
+	return p.GCBlocks(ctx, plan, dest)
+}
+
+// GCBlocks deletes content-addressed block objects that are not referenced
+// by any snapshot manifest still recorded in state. Blocks are only ever
+// removed here; everything else in the plan's namespace is left alone.
+func (p *Pruner) GCBlocks(ctx context.Context, plan string, dest storage.Storage) error {
+	usedBlocks := make(map[string]bool)
+	allBlocks := make(map[string]bool)
+
+	snapshots, err := p.store.ListSnapshots(plan)
+	if err != nil {
+		return fmt.Errorf("listing snapshots: %w", err)
+	}
+	for _, s := range snapshots {
 		blocks, err := p.collectBlocks(ctx, dest, plan, s.ID)
 		if err != nil {
 			log.Printf("error collecting blocks for %s: %v", s.ID, err)
@@ -91,7 +101,7 @@ func (p *Pruner) Prune(ctx context.Context, plan string, policy Policy, dest sto
 	}
 
 	if orphaned > 0 {
-		log.Printf("prune %q: removed %d orphaned blocks", plan, orphaned)
+		log.Printf("gc %q: removed %d orphaned blocks", plan, orphaned)
 	}
 
 	return nil
@@ -108,10 +118,11 @@ func (p *Pruner) deleteSnapshot(ctx context.Context, dest storage.Storage, plan,
 	if err != nil {
 		return err
 	}
+	// List returns full logical keys (e.g. "plan/snapshots/<id>/sources/0.sql"),
+	// so the prefix is not prepended again.
 	for _, obj := range objects {
-		fullKey := fmt.Sprintf("%s/%s", prefix, obj.Key)
-		if err := dest.Delete(ctx, fullKey); err != nil {
-			log.Printf("error deleting %s: %v", fullKey, err)
+		if err := dest.Delete(ctx, obj.Key); err != nil {
+			log.Printf("error deleting %s: %v", obj.Key, err)
 		}
 	}
 
@@ -136,6 +147,10 @@ func (p *Pruner) collectBlocks(ctx context.Context, dest storage.Storage, plan, 
 
 	var manifest struct {
 		Sources []struct {
+			// Database dump blocks (source-level).
+			Blocks []struct {
+				ID string `json:"id"`
+			} `json:"blocks"`
 			Files []struct {
 				Blocks []struct {
 					ID string `json:"id"`
@@ -145,11 +160,14 @@ func (p *Pruner) collectBlocks(ctx context.Context, dest storage.Storage, plan, 
 	}
 
 	if err := json.Unmarshal(data, &manifest); err != nil {
-		return nil, nil
+		return nil, fmt.Errorf("parsing manifest %s: %w", snapID, err)
 	}
 
 	var blocks []string
 	for _, src := range manifest.Sources {
+		for _, b := range src.Blocks {
+			blocks = append(blocks, b.ID)
+		}
 		for _, f := range src.Files {
 			for _, b := range f.Blocks {
 				blocks = append(blocks, b.ID)
