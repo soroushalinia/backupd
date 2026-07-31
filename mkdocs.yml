@@ -8,21 +8,33 @@ theme:
   palette:
     - media: "(prefers-color-scheme: light)"
       scheme: default
-      primary: indigo
+      primary: yellow
+      accent: amber
       toggle:
         icon: material/brightness-7
         name: Switch to dark mode
     - media: "(prefers-color-scheme: dark)"
       scheme: slate
-      primary: indigo
+      primary: yellow
+      accent: amber
       toggle:
         icon: material/brightness-4
         name: Switch to light mode
   features:
     - navigation.instant
+    - navigation.instant.progress
     - navigation.tracking
+    - navigation.tabs
+    - navigation.prune
     - navigation.top
+    - navigation.footer
+    - toc.integrate
+    - search.suggest
+    - search.share
     - content.code.copy
+    - content.code.select
+    - content.code.annotate
+    - table
 
 markdown_extensions:
   - admonition
@@ -43,17 +55,16 @@ extra_javascript:
 
 nav:
   - Home: index.md
+  - Installation: installation.md
   - Getting Started:
-      - Installation: installation.md
       - Quick Start: quickstart.md
       - Examples: examples.md
-  - Reference:
-      - Configuration: configuration.md
-      - Sources: sources.md
-      - Restore & Verify: restore.md
-      - Encryption: encryption.md
-      - Retention: retention.md
-      - Hooks: hooks.md
-      - Scheduling: scheduling.md
-      - CLI Reference: cli.md
+  - Configuration: configuration.md
+  - Sources: sources.md
+  - Restore & Verify: restore.md
+  - Encryption: encryption.md
+  - Retention: retention.md
+  - Hooks: hooks.md
+  - Scheduling: scheduling.md
+  - CLI Reference: cli.md
   - FAQ: faq.md
