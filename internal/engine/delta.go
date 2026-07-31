@@ -203,7 +203,10 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 
 func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte) error {
 	for _, ref := range manifest.Files {
-		outPath := filepath.Join(target, ref.Path)
+		outPath, err := safeJoin(target, ref.Path)
+		if err != nil {
+			return fmt.Errorf("file %q: %w", ref.Path, err)
+		}
 		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
 			return err
 		}
@@ -262,6 +265,17 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 		}
 	}
 	return nil
+}
+
+// safeJoin joins rel onto base and verifies the result stays inside base,
+// preventing path traversal via manifest-controlled paths.
+func safeJoin(base, rel string) (string, error) {
+	cleanBase := filepath.Clean(base)
+	joined := filepath.Join(cleanBase, rel)
+	if joined != cleanBase && !strings.HasPrefix(joined, cleanBase+string(filepath.Separator)) {
+		return "", fmt.Errorf("path escapes target directory")
+	}
+	return joined, nil
 }
 
 func isExcluded(rel string, exclude []string) bool {

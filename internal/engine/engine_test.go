@@ -208,7 +208,7 @@ func TestEngineRunIncremental(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	store, err := state.New(filepath.Join(src, "state.db"))
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -259,6 +259,38 @@ func TestEngineRunIncremental(t *testing.T) {
 	}
 	if second.Size != 0 {
 		t.Errorf("expected zero uploaded bytes for unchanged file, got %d", second.Size)
+	}
+}
+
+func TestSafeJoin(t *testing.T) {
+	target := t.TempDir()
+
+	cases := []struct {
+		name string
+		rel  string
+		want string
+	}{
+		{"plain", "dir/file.txt", target + "/dir/file.txt"},
+		{"nested", "a/b/c", target + "/a/b/c"},
+		{"dot", "./file.txt", target + "/file.txt"},
+		{"dotdot-within", "a/../file.txt", target + "/file.txt"},
+	}
+	for _, tc := range cases {
+		got, err := safeJoin(target, tc.rel)
+		if err != nil {
+			t.Errorf("%s: unexpected error: %v", tc.name, err)
+			continue
+		}
+		if got != tc.want {
+			t.Errorf("%s: got %q, want %q", tc.name, got, tc.want)
+		}
+	}
+
+	evil := []string{"../escape.txt", "../../../../etc/passwd", "a/../../../../etc/shadow"}
+	for _, rel := range evil {
+		if _, err := safeJoin(target, rel); err == nil {
+			t.Errorf("expected traversal error for %q", rel)
+		}
 	}
 }
 
