@@ -36,11 +36,12 @@ type blockRef struct {
 }
 
 type fileBlockRef struct {
-	Path     string      `json:"path"`
-	Size     int64       `json:"size"`
-	Mode     os.FileMode `json:"mode"`
-	Blocks   []blockRef  `json:"blocks"`
-	FileHash string      `json:"file_hash"`
+	Path       string      `json:"path"`
+	Size       int64       `json:"size"`
+	Mode       os.FileMode `json:"mode"`
+	LinkTarget string      `json:"link_target,omitempty"`
+	Blocks     []blockRef  `json:"blocks"`
+	FileHash   string      `json:"file_hash"`
 }
 
 type fileManifest struct {
@@ -105,24 +106,57 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 		if err != nil {
 			return err
 		}
-		if fi.IsDir() {
-			return nil
-		}
 
 		rel, err := filepath.Rel(sourceRoot, path)
 		if err != nil {
 			return err
 		}
+		if rel == "." {
+			return nil
+		}
+
+		if fi.IsDir() {
+			if isExcluded(rel, exclude) {
+				return filepath.SkipDir
+			}
+			manifest.Files = append(manifest.Files, fileBlockRef{
+				Path: rel,
+				Mode: fi.Mode(),
+			})
+			return nil
+		}
+
 		if isExcluded(rel, exclude) {
 			return nil
 		}
-		log.Printf("  delta file: %s (%s)", rel, formatBytes(fi.Size()))
 
 		ref := fileBlockRef{
 			Path: rel,
 			Size: fi.Size(),
 			Mode: fi.Mode(),
 		}
+
+		// Symlinks are recorded with their target instead of being
+		// followed: following can escape the source root, duplicate
+		// content, and fail the whole backup on broken links.
+		if fi.Mode()&os.ModeSymlink != 0 {
+			target, err := os.Readlink(path)
+			if err != nil {
+				return err
+			}
+			ref.LinkTarget = target
+			manifest.Files = append(manifest.Files, ref)
+			return nil
+		}
+
+		// Special files (fifos, sockets, devices) cannot be backed up
+		// as regular content; skip them rather than hang or fail.
+		if !fi.Mode().IsRegular() {
+			log.Printf("  skipping special file %s (mode %v)", rel, fi.Mode())
+			return nil
+		}
+
+		log.Printf("  delta file: %s (%s)", rel, formatBytes(fi.Size()))
 
 		prevRef, hadPrev := prevFiles[rel]
 
@@ -246,7 +280,30 @@ func processFileBlocks(ctx context.Context, dest storage.Storage, planName, path
 }
 
 func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte) error {
+	// Pass 1: recreate directories (including empty ones) with their modes.
 	for _, ref := range manifest.Files {
+		if ref.Mode&os.ModeDir == 0 {
+			continue
+		}
+		outPath, err := safeJoin(target, ref.Path)
+		if err != nil {
+			return fmt.Errorf("dir %q: %w", ref.Path, err)
+		}
+		if err := os.MkdirAll(outPath, ref.Mode.Perm()); err != nil {
+			return err
+		}
+		if err := os.Chmod(outPath, ref.Mode.Perm()); err != nil {
+			return err
+		}
+	}
+
+	// Pass 2: write regular files. This must happen before symlinks are
+	// created so a malicious manifest cannot redirect writes through a
+	// restored symlink out of the target directory.
+	for _, ref := range manifest.Files {
+		if ref.Mode&os.ModeDir != 0 || ref.Mode&os.ModeSymlink != 0 {
+			continue
+		}
 		outPath, err := safeJoin(target, ref.Path)
 		if err != nil {
 			return fmt.Errorf("file %q: %w", ref.Path, err)
@@ -308,6 +365,24 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 			return err
 		}
 	}
+
+	// Pass 3: recreate symlinks. The targets are restored verbatim; they
+	// are never followed during restore.
+	for _, ref := range manifest.Files {
+		if ref.Mode&os.ModeSymlink == 0 {
+			continue
+		}
+		outPath, err := safeJoin(target, ref.Path)
+		if err != nil {
+			return fmt.Errorf("symlink %q: %w", ref.Path, err)
+		}
+		if err := os.MkdirAll(filepath.Dir(outPath), 0755); err != nil {
+			return err
+		}
+		if err := os.Symlink(ref.LinkTarget, outPath); err != nil {
+			return fmt.Errorf("creating symlink %q: %w", ref.Path, err)
+		}
+	}
 	return nil
 }
 
@@ -324,10 +399,12 @@ func safeJoin(base, rel string) (string, error) {
 
 // isExcluded reports whether rel should be skipped. Patterns are matched
 // against the full relative path, the file basename (so "*.log" matches
-// nested files), and as a plain substring (so "cache/" matches any
-// directory segment).
+// nested files), and as a plain substring (so "cache" or "cache/" matches
+// any directory segment). Trailing slashes are ignored so a pattern like
+// "cache/" also matches the directory entry "cache" itself.
 func isExcluded(rel string, exclude []string) bool {
 	for _, ex := range exclude {
+		ex = strings.TrimSuffix(ex, "/")
 		if matched, _ := filepath.Match(ex, rel); matched {
 			return true
 		}

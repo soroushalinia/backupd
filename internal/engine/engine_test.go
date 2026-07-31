@@ -371,6 +371,99 @@ func (s *failStorage) Upload(ctx context.Context, key string, r io.Reader) error
 	return s.testStorage.Upload(ctx, key, r)
 }
 
+func TestEngineFileSourceSymlinksAndEmptyDirs(t *testing.T) {
+	src := t.TempDir()
+	if err := os.WriteFile(filepath.Join(src, "data.txt"), []byte("content"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(src, "emptydir"), 0755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(filepath.Join(src, "private"), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("data.txt", filepath.Join(src, "link-relative")); err != nil {
+		t.Fatal(err)
+	}
+
+	outsideDir := t.TempDir()
+	outsideFile := filepath.Join(outsideDir, "outside.txt")
+	if err := os.WriteFile(outsideFile, []byte("original"), 0644); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(outsideFile, filepath.Join(src, "link-absolute")); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink("nonexistent", filepath.Join(src, "link-broken")); err != nil {
+		t.Fatal(err)
+	}
+
+	store, err := state.New(filepath.Join(t.TempDir(), "state.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer store.Close()
+
+	eng := New(store)
+	st := &testStorage{}
+
+	plan := config.Plan{
+		Name: "symlinks-plan",
+		Sources: []config.Source{
+			{Type: "file", Path: src},
+		},
+		Destination: config.Destination{
+			Type: "s3", Bucket: "b", Endpoint: "e",
+		},
+	}
+
+	result, err := eng.Run(context.Background(), plan, st)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	target := filepath.Join(t.TempDir(), "restore")
+	if err := eng.Restore(context.Background(), plan, result.SnapshotID, target, st); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := os.Stat(filepath.Join(target, "emptydir")); err != nil {
+		t.Errorf("empty dir not restored: %v", err)
+	}
+	if mode, err := os.Stat(filepath.Join(target, "private")); err != nil {
+		t.Errorf("private dir not restored: %v", err)
+	} else if mode.Mode().Perm() != 0700 {
+		t.Errorf("private dir mode = %v, want 0700", mode.Mode().Perm())
+	}
+
+	for name, want := range map[string]string{
+		"link-relative": "data.txt",
+		"link-absolute": outsideFile,
+		"link-broken":   "nonexistent",
+	} {
+		got, err := os.Readlink(filepath.Join(target, name))
+		if err != nil {
+			t.Errorf("symlink %s not restored: %v", name, err)
+			continue
+		}
+		if got != want {
+			t.Errorf("symlink %s target = %q, want %q", name, got, want)
+		}
+	}
+
+	if content, err := os.ReadFile(outsideFile); err != nil {
+		t.Errorf("outside file disappeared: %v", err)
+	} else if string(content) != "original" {
+		t.Errorf("restore wrote through symlink: outside file = %q", content)
+	}
+
+	if data, err := os.ReadFile(filepath.Join(target, "data.txt")); err != nil {
+		t.Errorf("regular file not restored: %v", err)
+	} else if string(data) != "content" {
+		t.Errorf("regular file content = %q", data)
+	}
+}
+
 func TestFailedRunCleansUpUploadedSources(t *testing.T) {
 	if _, err := exec.LookPath("docker"); err != nil {
 		t.Skip("docker not available")
