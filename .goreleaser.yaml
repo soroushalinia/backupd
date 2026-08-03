@@ -26,7 +26,7 @@ builds:
 archives:
   - format_overrides:
       - goos: darwin
-        format: zip
+        formats: zip
     files:
       - LICENSE
       - README.md
