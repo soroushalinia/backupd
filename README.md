@@ -6,7 +6,7 @@
 [![Docs](https://img.shields.io/badge/docs-soroushalinia.github.io%2Fbackupd-blue)](https://soroushalinia.github.io/backupd/)
 [![Release](https://img.shields.io/github/v/release/soroushalinia/backupd)](https://github.com/soroushalinia/backupd/releases)
 
-> **Status: production ready for self-hosted use.** Stable config schema and snapshot format as of v0.2.0. Backups are integrity-verified (content hashes on every block, authenticated encryption when enabled) and covered by a race-clean test suite plus CI on Go 1.23/1.24 (linux/macOS) and a goreleaser-validated release pipeline.
+> **Status: production ready for self-hosted use.**
 
 Declarative S3-compatible backup daemon. Define your backup plans in a single YAML file - sources, destination, encryption, retention, tags, and hooks - and let backupd handle the rest.
 
