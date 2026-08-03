@@ -2,8 +2,11 @@
 
 ## Is backupd production ready?
 
-No. It is under active development - config schema and snapshot formats may change without
-notice. Use it for testing and feedback, not for critical backups yet.
+Yes, for self-hosted use. The config schema and snapshot format are stable as of v0.2.0. Every
+block is stored with a content hash that `backupd verify` and restore both check (so corrupted
+storage is always detected, with or without encryption), and the test suite runs race-clean on
+Go 1.23/1.24 in CI. As with any backup tool, test a restore before you rely on it - `backupd
+restore <plan> <id> --dry-run` reports what a restore would write without touching anything.
 
 ## Do I need to keep the daemon running?
 

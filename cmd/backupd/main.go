@@ -18,7 +18,9 @@ func needsConfig(cmd *cobra.Command) bool {
 	return true
 }
 
-func main() {
+// newRootCmd builds the full command tree. main() only executes it, so tests
+// can exercise every command through the same wiring.
+func newRootCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:          "backupd",
 		Short:        "Declarative S3-compatible backup daemon",
@@ -52,7 +54,11 @@ func main() {
 	cmd.AddCommand(newCompletionCmd())
 	cmd.AddCommand(newVerifyCmd())
 
-	if err := cmd.Execute(); err != nil {
+	return cmd
+}
+
+func main() {
+	if err := newRootCmd().Execute(); err != nil {
 		os.Exit(1)
 	}
 }

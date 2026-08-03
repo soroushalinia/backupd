@@ -165,11 +165,30 @@ func verifyFileBlocks(ctx context.Context, dest storage.Storage, planName, path 
 			if err != nil {
 				return fmt.Errorf("block %s for %s: decryption failed (corrupt): %w", block.ID, path, err)
 			}
-			if computed := sha256.Sum256(plain); !bytes.Equal(computed[:], plainHash) {
-				return fmt.Errorf("block %s for %s: hash mismatch (corrupt)", block.ID, path)
-			}
+		}
+		if err := checkBlockHash(block, path, plain); err != nil {
+			return err
 		}
 		hash.Write(plain)
+	}
+	return nil
+}
+
+// checkBlockHash verifies that the plaintext content of a block matches the
+// content hash recorded in its manifest entry. Encrypted blocks are already
+// authenticated by AES-GCM; the hash is the only integrity check for
+// unencrypted ones, and it is applied to both for consistency.
+func checkBlockHash(block blockRef, path string, plain []byte) error {
+	if block.Hash == "" {
+		// Blocks recorded before content hashes were added.
+		return nil
+	}
+	plainHash, err := hex.DecodeString(block.Hash)
+	if err != nil {
+		return fmt.Errorf("invalid block hash for %s: %w", path, err)
+	}
+	if computed := sha256.Sum256(plain); !bytes.Equal(computed[:], plainHash) {
+		return fmt.Errorf("block %s for %s: hash mismatch (corrupt)", block.ID, path)
 	}
 	return nil
 }

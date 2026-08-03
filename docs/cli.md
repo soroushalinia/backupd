@@ -12,16 +12,16 @@ Global flag: `--config` / `-c` - path to config file (default `~/.backupd.yaml`)
 |---------|-------------|
 | `list` | List configured plans |
 | `status [plan]` | Show the last backup status for each plan (or one plan) |
-| `history <plan>` | Show all snapshots for a plan |
-| `run <plan>` | Execute a backup now |
-| `run <plan> --dry-run` | Report what would be uploaded without writing anything |
+| `history [plan]` | Show all snapshots for a plan (or all plans) |
+| `run [plan]` | Execute a backup now (or all plans) |
+| `run [plan] --dry-run` | Report what would be uploaded without writing anything |
 | `check` | Validate the configuration and print a plan summary |
 | `restore <plan> <id>` | Restore a snapshot to the current directory |
 | `restore <plan> <id> --dry-run` | Report what would be restored without writing anything |
-| `prune <plan>` | Apply the plan's retention policy now, then garbage-collect orphaned blocks |
-| `prune <plan> --dry-run` | Report what would be deleted without deleting anything |
+| `prune [plan]` | Apply the plan's retention policy now, then garbage-collect orphaned blocks |
+| `prune [plan] --dry-run` | Report what would be deleted without deleting anything |
 | `daemon` | Run the scheduler daemon |
-| `verify <plan> [id]` | Verify snapshot integrity (all snapshots, or one) |
+| `verify [plan] [id]` | Verify snapshot integrity (all snapshots, or one) |
 | `export-systemd [plan]` | Generate systemd timer + service units |
 | `completion <shell>` | Generate shell completion (`bash`, `zsh`, `fish`) |
 | `help` | Show help |
@@ -43,11 +43,15 @@ encryption, and retention. Problems are reported as warnings and make `check` ex
 
 ```shell
 backupd run server               # execute the plan
+backupd run                      # execute every configured plan, in order
 backupd run server --dry-run     # show what would be uploaded
 ```
 
 With `--dry-run` no data is written: storage uploads, hooks, snapshot state, and retention pruning
 are all skipped. The reported size is what a real run would upload.
+
+A run that finds nothing changed - same files and dumps as the previous snapshot - records no new
+snapshot and reports `nothing changed` instead of a snapshot id.
 
 ## export-systemd
 
@@ -78,22 +82,26 @@ backupd restore server <snapshot-id> --dry-run   # report without writing
 
 ```shell
 backupd prune server               # apply retention now
+backupd prune                      # apply retention for every plan
 backupd prune server --dry-run     # report what would be deleted
 ```
 
 Pruning normally happens automatically after every successful backup run; `prune` applies the
 plan's retention policy on demand, deleting the snapshots the policy no longer keeps and then
 garbage-collecting orphaned blocks. With `--dry-run` nothing is deleted - the snapshots and
-orphaned blocks that would be removed are reported.
+orphaned blocks that would be removed are reported. Plans without a retention policy are skipped
+when pruning all plans, and an error when named explicitly.
 
 ## verify
 
 ```shell
-backupd verify server          # verify all snapshots
-backupd verify server <id>     # verify one snapshot
+backupd verify                # verify all snapshots of every plan
+backupd verify server         # verify all snapshots of one plan
+backupd verify server <id>    # verify one snapshot
 ```
 
-Checks that every object referenced by a snapshot's manifest exists and decrypts successfully.
+Checks that every object referenced by a snapshot's manifest exists, decrypts successfully, and
+matches the content hash recorded in the manifest - for encrypted and unencrypted backups alike.
 
 ## exit codes
 

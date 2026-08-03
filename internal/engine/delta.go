@@ -102,13 +102,13 @@ func (e *Engine) previousDumpBlocks(ctx context.Context, dest storage.Storage, p
 	return nil, nil
 }
 
-func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string, encKey []byte, limiter *ratelimit.Limiter) (int64, *fileManifest, error) {
+func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage, planName, sourceRoot string, exclude []string, encKey []byte, limiter *ratelimit.Limiter) (int64, *fileManifest, bool, error) {
 	var total int64
 	manifest := &fileManifest{}
 
 	prev, err := e.previousSources(ctx, dest, planName)
 	if err != nil {
-		return 0, nil, fmt.Errorf("loading previous manifest: %w", err)
+		return 0, nil, false, fmt.Errorf("loading previous manifest: %w", err)
 	}
 	prevFiles := make(map[string]*fileBlockRef)
 	for _, src := range prev {
@@ -242,11 +242,45 @@ func (e *Engine) backupFilesWithDelta(ctx context.Context, dest storage.Storage,
 	})
 
 	if err != nil {
-		return 0, nil, err
+		return 0, nil, false, err
 	}
 
 	log.Printf("  delta complete: %d files, %s new/changed blocks", len(manifest.Files), formatBytes(total))
-	return total, manifest, nil
+	return total, manifest, fileManifestChanged(prevFiles, manifest), nil
+}
+
+// fileManifestChanged reports whether the current walk produced a file list
+// different from the previous snapshot's: new paths, deleted paths, or
+// paths whose size, mode, hash, link target, or hardlink relation changed.
+// A new empty file or a deletion both count as changes even though nothing
+// is uploaded, so the snapshot that records them is not skipped.
+func fileManifestChanged(prev map[string]*fileBlockRef, cur *fileManifest) bool {
+	seen := make(map[string]struct{}, len(cur.Files))
+	for i := range cur.Files {
+		f := &cur.Files[i]
+		seen[f.Path] = struct{}{}
+		p, ok := prev[f.Path]
+		if !ok {
+			return true
+		}
+		if !sameFileRef(p, f) {
+			return true
+		}
+	}
+	for path := range prev {
+		if _, ok := seen[path]; !ok {
+			return true
+		}
+	}
+	return false
+}
+
+func sameFileRef(a, b *fileBlockRef) bool {
+	return a.Size == b.Size &&
+		a.Mode == b.Mode &&
+		a.FileHash == b.FileHash &&
+		a.LinkTarget == b.LinkTarget &&
+		a.HardlinkOf == b.HardlinkOf
 }
 
 // fileID returns a stable identifier for a file's inode, used to detect
@@ -470,8 +504,10 @@ func (e *Engine) backupDumpBlocks(ctx context.Context, dest storage.Storage, pla
 	return total, refs, nil
 }
 
-// downloadBlock fetches a block, decrypting and hash-verifying it when the
-// plan is encrypted.
+// downloadBlock fetches a block, decrypting it when the plan is encrypted
+// and always verifying the plaintext against the content hash recorded in
+// the manifest. Unencrypted backups get the same integrity guarantee as
+// encrypted ones: restore never writes silently corrupted data.
 func downloadBlock(ctx context.Context, dest storage.Storage, planName string, block blockRef, encKey []byte, limiter *ratelimit.Limiter) ([]byte, error) {
 	blockKey := fmt.Sprintf("%s/blocks/%s", planName, block.ID)
 	r, err := dest.Download(ctx, blockKey)
@@ -498,6 +534,12 @@ func downloadBlock(ctx context.Context, dest storage.Storage, planName string, b
 		if err != nil {
 			return nil, fmt.Errorf("decrypting block %s: %w", block.ID, err)
 		}
+	}
+	if block.Hash != "" {
+		plainHash, err := hex.DecodeString(block.Hash)
+		if err != nil {
+			return nil, fmt.Errorf("invalid block hash: %w", err)
+		}
 		computed := sha256.Sum256(plain)
 		if !bytes.Equal(computed[:], plainHash) {
 			return nil, fmt.Errorf("block %s: hash mismatch (corrupt)", block.ID)
@@ -507,28 +549,43 @@ func downloadBlock(ctx context.Context, dest storage.Storage, planName string, b
 }
 
 // restoreDumpBlocks reassembles a dump source from its block references,
-// writing the plaintext dump to target/<basename>.
+// writing the plaintext dump to target/<basename>. The dump is written to a
+// temp file and renamed into place only after every block is verified, so a
+// corrupt block never leaves a truncated dump behind.
 func (e *Engine) restoreDumpBlocks(ctx context.Context, dest storage.Storage, planName, srcKey, target string, blocks []blockRef, encKey []byte, limiter *ratelimit.Limiter) error {
 	if err := os.MkdirAll(target, 0755); err != nil {
 		return fmt.Errorf("creating target dir: %w", err)
 	}
-	out := filepath.Join(target, filepath.Base(srcKey))
-	f, err := os.Create(out)
+	tmp, err := os.CreateTemp(target, ".backupd-restore-*")
 	if err != nil {
 		return err
+	}
+	tmpName := tmp.Name()
+	removeTmp := func() {
+		tmp.Close()
+		os.Remove(tmpName)
 	}
 	for _, block := range blocks {
 		plain, err := downloadBlock(ctx, dest, planName, block, encKey, limiter)
 		if err != nil {
-			f.Close()
+			removeTmp()
 			return err
 		}
-		if _, err := f.Write(plain); err != nil {
-			f.Close()
+		if _, err := tmp.Write(plain); err != nil {
+			removeTmp()
 			return err
 		}
 	}
-	return f.Close()
+	if err := tmp.Close(); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	out := filepath.Join(target, filepath.Base(srcKey))
+	if err := os.Rename(tmpName, out); err != nil {
+		os.Remove(tmpName)
+		return err
+	}
+	return nil
 }
 
 func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage, planName, target string, manifest *fileManifest, encKey []byte, limiter *ratelimit.Limiter) error {
@@ -552,7 +609,10 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 	// Pass 2: write regular files. This must happen before symlinks are
 	// created so a malicious manifest cannot redirect writes through a
 	// restored symlink out of the target directory. Hardlink entries
-	// carry no blocks; they are recreated in pass 4.
+	// carry no blocks; they are recreated in pass 4. Each file is written
+	// to a temp file in the target tree and renamed into place only after
+	// every block downloaded and verified, so a corrupt block never
+	// leaves a half-written file behind.
 	for _, ref := range manifest.Files {
 		if ref.Mode&os.ModeDir != 0 || ref.Mode&os.ModeSymlink != 0 || ref.HardlinkOf != "" {
 			continue
@@ -565,24 +625,37 @@ func (e *Engine) restoreFilesWithDelta(ctx context.Context, dest storage.Storage
 			return err
 		}
 
-		f, err := os.OpenFile(outPath, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, ref.Mode)
+		tmp, err := os.CreateTemp(filepath.Dir(outPath), ".backupd-restore-*")
 		if err != nil {
 			return err
+		}
+		tmpName := tmp.Name()
+		removeTmp := func() {
+			tmp.Close()
+			os.Remove(tmpName)
 		}
 
 		for _, block := range ref.Blocks {
 			plain, err := downloadBlock(ctx, dest, planName, block, encKey, limiter)
 			if err != nil {
-				f.Close()
+				removeTmp()
 				return err
 			}
-			if _, err := f.Write(plain); err != nil {
-				f.Close()
+			if _, err := tmp.Write(plain); err != nil {
+				removeTmp()
 				return err
 			}
 		}
-
-		if err := f.Close(); err != nil {
+		if err := tmp.Chmod(ref.Mode.Perm()); err != nil {
+			removeTmp()
+			return err
+		}
+		if err := tmp.Close(); err != nil {
+			os.Remove(tmpName)
+			return err
+		}
+		if err := os.Rename(tmpName, outPath); err != nil {
+			os.Remove(tmpName)
 			return err
 		}
 	}

@@ -1,5 +1,33 @@
 # Changelog
 
+## v0.3.0 - unreleased
+
+### Features
+
+- **`run`, `prune`, `verify`, and `history` accept no plan name**: without an argument they
+  operate on every configured plan (matching `status`), and an unknown plan name now errors with
+  the list of available plans instead of a bare "accepts 1 arg(s)".
+- **No-change runs record no snapshot**: a run whose files and dumps are identical to the
+  previous snapshot reports `nothing changed` and skips the empty history row (new empty files
+  and deletions still count as changes).
+
+### Fixes
+
+- **Unencrypted backups are now integrity-verified**: `verify` and `restore` check every block
+  against the content hash recorded in its manifest, not just encrypted ones - tampered or
+  corrupted storage is detected in both modes.
+- **Restore never leaves partial files**: files and dumps are written to a temp file and renamed
+  into place only after every block downloads and verifies, so a corrupt block cannot produce a
+  silently truncated file.
+
+### Tests
+
+- CLI command wiring: list/check/run/prune/verify/history through the real cobra root command,
+  plan-selection errors, and an end-to-end run-verify cycle against MinIO (gated on
+  `BACKUPD_TEST_MINIO=1`).
+- Corruption detection for encrypted and unencrypted backups (verify and restore), S3
+  multipart/exists round trips against MinIO, progress reader, plan selection.
+
 ## v0.2.0 - 2026-07-31
 
 ### Features

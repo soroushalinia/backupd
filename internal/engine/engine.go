@@ -8,6 +8,7 @@ import (
 	"io"
 	"log"
 	"os"
+	"reflect"
 	"time"
 
 	"github.com/soroushalinia/backupd/internal/config"
@@ -78,7 +79,7 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 		}
 	}
 
-	totalSize, err := e.runSources(ctx, dest, plan, snapID, limiter)
+	totalSize, changed, err := e.runSources(ctx, dest, plan, snapID, limiter)
 
 	if err != nil {
 		// A failed run may have uploaded content-addressed blocks
@@ -112,16 +113,19 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 		return &RunResult{Size: totalSize, Duration: elapsed}, nil
 	}
 
-	snap := config.Snapshot{
-		ID:        snapID,
-		Plan:      plan.Name,
-		Timestamp: time.Now().UTC(),
-		Size:      totalSize,
-		Tags:      plan.Tags,
-	}
-
-	if err := e.store.RecordSnapshot(snap); err != nil {
-		return nil, fmt.Errorf("recording snapshot: %w", err)
+	if changed {
+		snap := config.Snapshot{
+			ID:        snapID,
+			Plan:      plan.Name,
+			Timestamp: time.Now().UTC(),
+			Size:      totalSize,
+			Tags:      plan.Tags,
+		}
+		if err := e.store.RecordSnapshot(snap); err != nil {
+			return nil, fmt.Errorf("recording snapshot: %w", err)
+		}
+	} else {
+		log.Printf("backup %q: nothing changed, no snapshot created", plan.Name)
 	}
 
 	if plan.Retention != nil {
@@ -140,6 +144,10 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 	}
 
 	elapsed := time.Since(start)
+	if !changed {
+		log.Printf("backup %q complete: nothing changed (%s)", plan.Name, elapsed)
+		return &RunResult{Duration: elapsed}, nil
+	}
 	log.Printf("backup %q complete: snapshot=%s size=%d duration=%s", plan.Name, snapID, totalSize, elapsed)
 
 	return &RunResult{
@@ -149,7 +157,7 @@ func (e *Engine) run(ctx context.Context, plan config.Plan, dest storage.Storage
 	}, nil
 }
 
-func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan config.Plan, snapID string, limiter *ratelimit.Limiter) (totalSize int64, err error) {
+func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan config.Plan, snapID string, limiter *ratelimit.Limiter) (totalSize int64, changed bool, err error) {
 	var fileManifests []*fileManifest
 	dbEntries := make(map[int]sourceEntry)
 
@@ -168,6 +176,15 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		}
 	}()
 
+	// A run with nothing to record (no previous snapshot, or a tree and
+	// dumps identical to the previous snapshot) does not create a new
+	// snapshot: an empty history row would only add noise.
+	snapshots, err := e.store.ListSnapshots(plan.Name)
+	if err != nil {
+		return 0, false, fmt.Errorf("listing snapshots: %w", err)
+	}
+	changed = len(snapshots) == 0
+
 	tags := make(map[string]string)
 	for k, v := range plan.Tags {
 		tags[k] = v
@@ -178,7 +195,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 
 	encInfo, encKey, err := e.encryptionKey(ctx, dest, plan)
 	if err != nil {
-		return 0, fmt.Errorf("encryption setup: %w", err)
+		return 0, false, fmt.Errorf("encryption setup: %w", err)
 	}
 
 	for i, srcCfg := range plan.Sources {
@@ -191,11 +208,12 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		switch srcCfg.Type {
 		case "file":
 			log.Printf("  source %d: backing up files from %s ...", i, srcCfg.Path)
-			size, fm, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude, encKey, limiter)
+			size, fm, fileChanged, err := e.backupFilesWithDelta(ctx, dest, plan.Name, srcCfg.Path, srcCfg.Exclude, encKey, limiter)
 			if err != nil {
-				return 0, fmt.Errorf("backing up files: %w", err)
+				return 0, false, fmt.Errorf("backing up files: %w", err)
 			}
 			totalSize += size
+			changed = changed || fileChanged
 			fileManifests = append(fileManifests, fm)
 			continue
 
@@ -203,12 +221,12 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 			log.Printf("  source %d: dumping database (%s) ...", i, srcCfg.Adapter)
 			dbSrc, err := source.NewDatabaseSource(srcCfg.Adapter, srcCfg.DSN, srcCfg.DumpTool)
 			if err != nil {
-				return 0, fmt.Errorf("database source: %w", err)
+				return 0, false, fmt.Errorf("database source: %w", err)
 			}
 			srcKey = fmt.Sprintf("%s/snapshots/%s/sources/%d.sql", plan.Name, snapID, i)
 			r, srcErr = dbSrc.Capture(ctx)
 			if srcErr != nil {
-				return 0, fmt.Errorf("capturing source %d: %w", i, srcErr)
+				return 0, false, fmt.Errorf("capturing source %d: %w", i, srcErr)
 			}
 
 			// Dumps go through the same block pipeline as files: an
@@ -217,20 +235,21 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 			// rolling delta, uploading only the parts that differ.
 			prevBlocks, err := e.previousDumpBlocks(ctx, dest, plan.Name, i)
 			if err != nil {
-				return 0, fmt.Errorf("loading previous dump blocks: %w", err)
+				return 0, false, fmt.Errorf("loading previous dump blocks: %w", err)
 			}
 			size, refs, err := e.backupDumpBlocks(ctx, dest, plan.Name, r, prevBlocks, encKey, limiter)
 			if err != nil {
 				r.Close()
-				return 0, fmt.Errorf("backing up database dump: %w", err)
+				return 0, false, fmt.Errorf("backing up database dump: %w", err)
 			}
 			// The dump tool's exit status only surfaces when the stream
 			// is closed; a nonzero exit means the dump is truncated and
 			// must fail the run instead of being stored as-is.
 			if cerr := r.Close(); cerr != nil {
-				return 0, fmt.Errorf("backing up database dump: %w", cerr)
+				return 0, false, fmt.Errorf("backing up database dump: %w", cerr)
 			}
 			totalSize += size
+			changed = changed || !reflect.DeepEqual(refs, prevBlocks)
 			dbEntries[i] = sourceEntry{Type: "database", Key: srcKey, Blocks: refs}
 			continue
 
@@ -245,22 +264,26 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		default:
 			src, err := sourceFromConfig(srcCfg)
 			if err != nil {
-				return 0, fmt.Errorf("source %d: %w", i, err)
+				return 0, false, fmt.Errorf("source %d: %w", i, err)
 			}
 			srcKey = fmt.Sprintf("%s/snapshots/%s/sources/%d.tar.gz", plan.Name, snapID, i)
 			r, srcErr = src.Capture(ctx)
 		}
 
 		if srcErr != nil {
-			return 0, fmt.Errorf("capturing source %d: %w", i, srcErr)
+			return 0, false, fmt.Errorf("capturing source %d: %w", i, srcErr)
 		}
+
+		// Non-file, non-database sources are streamed whole on every run
+		// and cannot be cheaply diffed, so a snapshot is always recorded.
+		changed = true
 
 		size, err := uploadAndEncrypt(ctx, dest, srcKey, r, encKey, limiter)
 		if cerr := r.Close(); cerr != nil && err == nil {
 			err = cerr
 		}
 		if err != nil {
-			return 0, fmt.Errorf("uploading source %d: %w", i, err)
+			return 0, false, fmt.Errorf("uploading source %d: %w", i, err)
 		}
 		totalSize += size
 		storedKey := srcKey
@@ -308,7 +331,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 	}
 
 	if err := writeSnapshotManifest(ctx, dest, manifestKey, plan.Name, snapID, totalSize, sourceEntries, plan.Tags, encInfo); err != nil {
-		return 0, fmt.Errorf("writing manifest: %w", err)
+		return 0, false, fmt.Errorf("writing manifest: %w", err)
 	}
 	uploaded = append(uploaded, manifestKey)
 	if len(tags) > 0 {
@@ -317,7 +340,7 @@ func (e *Engine) runSources(ctx context.Context, dest storage.Storage, plan conf
 		}
 	}
 
-	return totalSize, nil
+	return totalSize, changed, nil
 }
 
 func uploadAndEncrypt(ctx context.Context, dest storage.Storage, key string, r io.Reader, encKey []byte, limiter *ratelimit.Limiter) (int64, error) {

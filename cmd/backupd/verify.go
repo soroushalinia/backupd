@@ -12,22 +12,24 @@ import (
 
 func newVerifyCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "verify <plan-name> [snapshot-id]",
+		Use:   "verify [plan-name] [snapshot-id]",
 		Short: "Verify integrity of stored snapshots",
-		Args:  cobra.RangeArgs(1, 2),
+		Long: `Verify integrity of stored snapshots by downloading and checking
+every referenced block against its recorded content hash. With no plan
+name, every configured plan is verified. A snapshot-id only makes sense
+together with a plan name.`,
+		Args: cobra.MaximumNArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := config.FromContext(cmd.Context())
-			planName := args[0]
 
-			var plan *config.Plan
-			for i := range cfg.Plans {
-				if cfg.Plans[i].Name == planName {
-					plan = &cfg.Plans[i]
-					break
-				}
+			plans, err := selectPlans(cfg, args)
+			if err != nil {
+				return err
 			}
-			if plan == nil {
-				return fmt.Errorf("plan %q not found", planName)
+
+			var snapshotID string
+			if len(args) == 2 {
+				snapshotID = args[1]
 			}
 
 			store, err := state.New(defaultStatePath())
@@ -36,21 +38,20 @@ func newVerifyCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			dest, err := storage.NewFromDest(plan.Destination)
-			if err != nil {
-				return fmt.Errorf("storage: %w", err)
-			}
+			for i := range plans {
+				plan := &plans[i]
 
-			eng := engine.New(store)
-			var snapshotID string
-			if len(args) == 2 {
-				snapshotID = args[1]
-			}
+				dest, err := storage.NewFromDest(plan.Destination)
+				if err != nil {
+					return fmt.Errorf("storage: %w", err)
+				}
 
-			if err := eng.Verify(cmd.Context(), *plan, snapshotID, dest); err != nil {
-				return fmt.Errorf("verification failed: %w", err)
+				eng := engine.New(store)
+				if err := eng.Verify(cmd.Context(), *plan, snapshotID, dest); err != nil {
+					return fmt.Errorf("plan %q verification failed: %w", plan.Name, err)
+				}
+				fmt.Printf("plan %q verification passed\n", plan.Name)
 			}
-			fmt.Println("verification passed")
 			return nil
 		},
 	}

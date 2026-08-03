@@ -23,6 +23,9 @@ plans:
       region: us-east-1
       access-key: ${AWS_ACCESS_KEY_ID}
       secret-key: ${AWS_SECRET_ACCESS_KEY}
+      # Use HTTPS by default. Set secure: false only for plain-HTTP
+      # endpoints (e.g. a local MinIO during development).
+      # secure: false
       storage-class: STANDARD_IA
     encryption:
       passphrase: ${BACKUP_PASSPHRASE}

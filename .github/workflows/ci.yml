@@ -21,6 +21,7 @@ jobs:
           go-version: ${{ matrix.go }}
       - run: go vet ./...
       - run: go test ./... -count=1 -timeout=5m
+      - run: go test ./... -count=1 -race -timeout=10m
       - run: go build -o /dev/null ./cmd/backupd
 
   lint:
@@ -34,3 +35,15 @@ jobs:
         with:
           version: v2.12.2
           args: --timeout=5m
+
+  release-check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+      - uses: goreleaser/goreleaser-action@v6
+        with:
+          version: '~> v2'
+          args: check

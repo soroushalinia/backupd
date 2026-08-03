@@ -247,8 +247,7 @@ func TestEngineRunIncremental(t *testing.T) {
 		},
 	}
 
-	first, err := eng.Run(context.Background(), plan, st)
-	if err != nil {
+	if _, err := eng.Run(context.Background(), plan, st); err != nil {
 		t.Fatal(err)
 	}
 
@@ -264,8 +263,8 @@ func TestEngineRunIncremental(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if second.SnapshotID == first.SnapshotID {
-		t.Fatal("expected different snapshot IDs")
+	if second.SnapshotID != "" {
+		t.Fatalf("unchanged run created a snapshot %q; nothing should be recorded", second.SnapshotID)
 	}
 
 	blocksAfterSecond := 0
@@ -341,8 +340,13 @@ func TestEngineRunIncrementalEncrypted(t *testing.T) {
 
 	// The regression: the second run reused blocks encrypted with the
 	// first run's key. Every snapshot must be verifiable and restorable,
-	// because later manifests reference blocks from earlier runs.
-	for _, id := range []string{first.SnapshotID, second.SnapshotID} {
+	// because later manifests reference blocks from earlier runs. The
+	// unchanged second run records no snapshot, so only the first is
+	// verified here.
+	if second.SnapshotID != "" {
+		t.Fatalf("unchanged run created a snapshot %q; nothing should be recorded", second.SnapshotID)
+	}
+	for _, id := range []string{first.SnapshotID} {
 		if err := eng.Verify(context.Background(), plan, id, st); err != nil {
 			t.Errorf("verify snapshot %s: %v", id, err)
 		}
@@ -525,7 +529,7 @@ func TestEngineDatabaseSourceIncremental(t *testing.T) {
 		}
 	}
 
-	// An unchanged database uploads nothing.
+	// An unchanged database uploads nothing and records no snapshot.
 	second, err := eng.Run(context.Background(), plan, st)
 	if err != nil {
 		t.Fatal(err)
@@ -533,10 +537,13 @@ func TestEngineDatabaseSourceIncremental(t *testing.T) {
 	if second.Size != 0 {
 		t.Errorf("expected zero upload for unchanged database, got %d", second.Size)
 	}
+	if second.SnapshotID != "" {
+		t.Errorf("unchanged database created snapshot %q; nothing should be recorded", second.SnapshotID)
+	}
 
 	// Every snapshot verifies and restores to the current dump.
 	wantDump := sqliteDump(t, dbPath)
-	for _, id := range []string{first.SnapshotID, second.SnapshotID} {
+	for _, id := range []string{first.SnapshotID} {
 		if err := eng.Verify(context.Background(), plan, id, st); err != nil {
 			t.Errorf("verify snapshot %s: %v", id, err)
 		}
@@ -1383,7 +1390,8 @@ func TestEngineFileSourceHardlinks(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// An unchanged tree (hardlinks included) uploads nothing.
+	// An unchanged tree (hardlinks included) uploads nothing and records
+	// no snapshot.
 	second, err := eng.Run(context.Background(), plan, st)
 	if err != nil {
 		t.Fatal(err)
@@ -1391,9 +1399,12 @@ func TestEngineFileSourceHardlinks(t *testing.T) {
 	if second.Size != 0 {
 		t.Errorf("expected zero upload for unchanged hardlinked tree, got %d", second.Size)
 	}
+	if second.SnapshotID != "" {
+		t.Errorf("unchanged tree created snapshot %q; nothing should be recorded", second.SnapshotID)
+	}
 
 	// All snapshots verify.
-	for _, id := range []string{first.SnapshotID, second.SnapshotID} {
+	for _, id := range []string{first.SnapshotID} {
 		if err := eng.Verify(context.Background(), plan, id, st); err != nil {
 			t.Errorf("verify snapshot %s: %v", id, err)
 		}

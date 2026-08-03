@@ -14,22 +14,17 @@ func newRunCmd() *cobra.Command {
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:   "run <plan-name>",
+		Use:   "run [plan-name]",
 		Short: "Execute a backup plan immediately",
-		Args:  cobra.ExactArgs(1),
+		Long: `Execute a backup plan immediately. With no plan name, every
+configured plan is run in order.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := config.FromContext(cmd.Context())
-			planName := args[0]
 
-			var plan *config.Plan
-			for i := range cfg.Plans {
-				if cfg.Plans[i].Name == planName {
-					plan = &cfg.Plans[i]
-					break
-				}
-			}
-			if plan == nil {
-				return fmt.Errorf("plan %q not found", planName)
+			plans, err := selectPlans(cfg, args)
+			if err != nil {
+				return err
 			}
 
 			store, err := state.New(defaultStatePath())
@@ -38,26 +33,32 @@ func newRunCmd() *cobra.Command {
 			}
 			defer store.Close()
 
-			dest, err := storage.NewFromDest(plan.Destination)
-			if err != nil {
-				return fmt.Errorf("storage: %w", err)
-			}
+			for i := range plans {
+				plan := &plans[i]
 
-			eng := engine.New(store)
-			var result *engine.RunResult
-			if dryRun {
-				result, err = eng.DryRun(cmd.Context(), *plan, dest)
-				if err == nil {
-					fmt.Printf("dry run complete: %d bytes would be uploaded (%s)\n", result.Size, result.Duration)
+				dest, err := storage.NewFromDest(plan.Destination)
+				if err != nil {
+					return fmt.Errorf("plan %q storage: %w", plan.Name, err)
 				}
-			} else {
-				result, err = eng.Run(cmd.Context(), *plan, dest)
-				if err == nil {
-					fmt.Printf("snapshot %s complete (%d bytes in %s)\n", result.SnapshotID, result.Size, result.Duration)
+
+				eng := engine.New(store)
+				var result *engine.RunResult
+				if dryRun {
+					result, err = eng.DryRun(cmd.Context(), *plan, dest)
+					if err == nil {
+						fmt.Printf("plan %q dry run complete: %d bytes would be uploaded (%s)\n", plan.Name, result.Size, result.Duration)
+					}
+				} else {
+					result, err = eng.Run(cmd.Context(), *plan, dest)
+					if err == nil && result.SnapshotID == "" {
+						fmt.Printf("plan %q: nothing changed, no snapshot created\n", plan.Name)
+					} else if err == nil {
+						fmt.Printf("plan %q snapshot %s complete (%d bytes in %s)\n", plan.Name, result.SnapshotID, result.Size, result.Duration)
+					}
 				}
-			}
-			if err != nil {
-				return fmt.Errorf("backup failed: %w", err)
+				if err != nil {
+					return fmt.Errorf("plan %q backup failed: %w", plan.Name, err)
+				}
 			}
 			return nil
 		},

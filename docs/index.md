@@ -9,10 +9,6 @@ backupd lets you define backup plans in a single YAML file - sources, destinatio
 retention, tags, and hooks - and handles the rest. Incremental by default, encrypted at rest, and
 scheduled without extra tooling.
 
-!!! warning "Not production ready"
-    backupd is under active development. APIs, config schema, and snapshot formats may change
-    without notice. Do not rely on it for critical backups yet.
-
 ## Key Features
 
 <div class="grid cards" markdown>

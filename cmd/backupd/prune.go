@@ -14,29 +14,19 @@ func newPruneCmd() *cobra.Command {
 	var dryRun bool
 
 	cmd := &cobra.Command{
-		Use:   "prune <plan-name>",
+		Use:   "prune [plan-name]",
 		Short: "Apply a plan's retention policy now",
 		Long: `Apply a plan's retention policy now: delete the snapshots the policy
 no longer keeps, then garbage-collect orphaned blocks. Pruning normally
-happens automatically after every successful backup run.`,
-		Args: cobra.ExactArgs(1),
+happens automatically after every successful backup run. With no plan
+name, every configured plan is pruned.`,
+		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg := config.FromContext(cmd.Context())
-			planName := args[0]
 
-			var plan *config.Plan
-			for i := range cfg.Plans {
-				if cfg.Plans[i].Name == planName {
-					plan = &cfg.Plans[i]
-					break
-				}
-			}
-			if plan == nil {
-				return fmt.Errorf("plan %q not found", planName)
-			}
-
-			if plan.Retention == nil {
-				return fmt.Errorf("plan %q has no retention policy", planName)
+			plans, err := selectPlans(cfg, args)
+			if err != nil {
+				return err
 			}
 
 			store, err := state.New(defaultStatePath())
@@ -45,19 +35,33 @@ happens automatically after every successful backup run.`,
 			}
 			defer store.Close()
 
-			dest, err := storage.NewFromDest(plan.Destination)
-			if err != nil {
-				return fmt.Errorf("storage: %w", err)
-			}
+			pruned := 0
+			for i := range plans {
+				plan := &plans[i]
 
-			pruner := retention.NewPruner(store)
-			pruner.DryRun = dryRun
-			if err := pruner.Prune(cmd.Context(), plan.Name, retention.FromConfig(plan.Retention), dest); err != nil {
-				return fmt.Errorf("prune failed: %w", err)
+				if plan.Retention == nil {
+					if len(args) == 0 {
+						fmt.Printf("plan %q has no retention policy, skipping\n", plan.Name)
+						continue
+					}
+					return fmt.Errorf("plan %q has no retention policy", plan.Name)
+				}
+
+				dest, err := storage.NewFromDest(plan.Destination)
+				if err != nil {
+					return fmt.Errorf("storage: %w", err)
+				}
+
+				pruner := retention.NewPruner(store)
+				pruner.DryRun = dryRun
+				if err := pruner.Prune(cmd.Context(), plan.Name, retention.FromConfig(plan.Retention), dest); err != nil {
+					return fmt.Errorf("plan %q prune failed: %w", plan.Name, err)
+				}
+				pruned++
 			}
 
 			if dryRun {
-				fmt.Printf("dry run complete: no changes made to %s\n", plan.Name)
+				fmt.Printf("dry run complete: no changes made to %d plan(s)\n", pruned)
 			}
 			return nil
 		},
